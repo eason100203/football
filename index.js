@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
 const { createClient } = require('@supabase/supabase-js');
@@ -7,19 +8,25 @@ const app = express();
 
 // LINE 設定
 const config = {
-  channelAccessToken: 'iNveRiCuYUbt0MBsHlojxYieoSwAsIqtpXUFMGlrU8Lz7ulWZJgqBTMJn18ddbXj4l11jPxtoVbqLReWECxzeUn9NVQE8V0pfVXxuEhj32iZ71kSDOaluM1Bhgyi84i6vcHihZ70jmNk3IgyspjkygdB04t89/1O/w1cDnyilFU=',
-  channelSecret: 'ec61a9d60d44e8dc863f586cf921ef6c',
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
 const client = new line.Client(config);
 
 // Supabase
 const supabase = createClient(
-  '你的SUPABASE_URL',
-  '你的SUPABASE_ANON_KEY'
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
 );
 
-app.post('/webhook', line.middleware(config), async (req, res) => {
+// 中間件 - LINE middleware 要先執行（用於驗證簽名）
+app.use('/webhook', line.middleware(config));
+
+// 其他中間件
+app.use(express.json());
+
+app.post('/webhook', async (req, res) => {
   Promise.all(req.body.events.map(handleEvent));
   res.sendStatus(200);
 });
@@ -119,8 +126,8 @@ async function handleEvent(event) {
 
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '指令：下注 / 我的下注 / 比例 / 結算'
+    text: '⚽ 足球投注 BOT\n\n📋 可用指令：\n• 下注 隊伍 金額\n• 我的下注\n• 比例\n• 結算 隊伍\n\n💡 範例：下注 曼聯 100'
   });
 }
 
-app.listen(3000, () => console.log('running'));
+app.listen(8686, () => console.log('running'));
