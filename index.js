@@ -3,27 +3,20 @@ const express = require('express');
 const line = require('@line/bot-sdk');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
+const fs = require('fs');
+const FormData = require('form-data');
 
 const app = express();
 
-// LINE 設定
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
 const client = new line.Client(config);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
-// 中間件 - LINE middleware 要先執行（用於驗證簽名）
 app.use('/webhook', line.middleware(config));
-
-// 其他中間件
 app.use(express.json());
 
 app.post('/webhook', async (req, res) => {
@@ -31,103 +24,419 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
+// ────────────────────────────────────────
 async function handleEvent(event) {
-  if (event.type !== 'message') return;
-
-  const text = event.message.text;
   const userId = event.source.userId;
+  if (!userId) return;
 
-  // 建立使用者
-  await supabase.from('users').upsert({
-    id: userId,
-    name: '玩家'
-  });
+  if (event.type === 'follow') {
+    await ensureUser(userId);
+    const user = await getUser(userId);
 
-  // 👉 下注
-  if (text.startsWith('下注')) {
-    const [_, team, amount] = text.split(' ');
-
-    await supabase.from('bets').insert({
-      user_id: userId,
-      team,
-      amount: parseInt(amount)
-    });
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `✅ 已下注 ${team} ${amount}`
-    });
-  }
-
-  // 👉 我的下注
-  if (text === '我的下注') {
-    const { data } = await supabase
-      .from('bets')
-      .select('*')
-      .eq('user_id', userId);
-
-    const msg = data.map(b => `${b.team} ${b.amount}`).join('\n') || '無';
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: msg
-    });
-  }
-
-  // 👉 圓餅圖
-  if (text === '比例') {
-    const { data } = await supabase.from('bets').select('*');
-
-    const result = {};
-    data.forEach(b => {
-      result[b.team] = (result[b.team] || 0) + b.amount;
-    });
-
-    const labels = Object.keys(result);
-    const values = Object.values(result);
-
-    const chartUrl = `https://quickchart.io/chart?c={
-      type:'pie',
-      data:{labels:${JSON.stringify(labels)},datasets:[{data:${JSON.stringify(values)}}]}
-    }`;
-
-    return client.replyMessage(event.replyToken, {
-      type: 'image',
-      originalContentUrl: chartUrl,
-      previewImageUrl: chartUrl
-    });
-  }
-
-  // 👉 結算
-  if (text.startsWith('結算')) {
-    const winTeam = text.split(' ')[1];
-
-    const { data } = await supabase.from('bets').select('*');
-
-    for (const bet of data) {
-      if (bet.team === winTeam) {
-        await supabase.rpc('increment_balance', {
-          uid: bet.user_id,
-          amount: bet.amount
-        });
-      } else {
-        await supabase.rpc('increment_balance', {
-          uid: bet.user_id,
-          amount: -bet.amount
-        });
-      }
+    if (!user.nickname) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '👋 歡迎加入！\n請先設定你的暱稱：\n\n設定暱稱 你的暱稱'
+      });
     }
 
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `🏆 ${winTeam} 勝！已結算`
+      text: '⚽ 歡迎回歸戰場！'
     });
   }
 
+  if (event.type !== 'message') return;
+
+  const text = event.message.text?.trim();
+  if (!text) return;
+
+  await ensureUser(userId);
+  const user = await getUser(userId);
+
+  // 新用戶還沒設定暱稱，強制引導
+  if (!user.nickname && !text.startsWith('設定暱稱')) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請先設定暱稱才能使用：\n\n設定暱稱 你的暱稱'
+    });
+  }
+
+  // ── 設定暱稱
+  if (text.startsWith('設定暱稱')) {
+    const nickname = text.replace('設定暱稱', '').trim();
+    if (!nickname) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '請輸入暱稱，例如：設定暱稱 禿頭'
+      });
+    }
+   const { data: existing } = await supabase
+    .from('users')
+    .select('id')
+    .eq('nickname', nickname)
+    .single();
+
+  if (existing && existing.id !== userId) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: `❌ 暱稱「${nickname}」已被使用，請換一個`
+    });
+  }
+    await supabase.from('users').update({ nickname }).eq('id', userId);
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: `✅ 暱稱已設定為：${nickname}`
+    });
+  }
+
+  // ── 下注 #3 阿根廷 2-50 500
+  if (text.startsWith('下注')) {
+    const parts = text.split(' ');
+    // parts: ['下注', '#3', '阿根廷', '2-50', '500']
+    if (parts.length !== 5) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '格式錯誤\n正確格式：下注 #場次 隊伍 條件 金額\n範例：下注 #3 阿根廷 2-50 500'
+      });
+    }
+
+    const matchId = parseInt(parts[1].replace('#', ''));
+    const team = parts[2];
+    const condition = parts[3];
+    const amount = parseInt(parts[4]);
+
+    if (isNaN(matchId) || isNaN(amount)) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '場次或金額格式錯誤'
+      });
+    }
+
+    // 確認場次存在且開放
+    const { data: match } = await supabase
+      .from('matches')
+      .select('*')
+      .eq('id', matchId)
+      .single();
+
+    if (!match) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: `找不到場次 #${matchId}`
+      });
+    }
+    if (match.status !== 'open') {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: `場次 #${matchId} 已關閉，無法下注`
+      });
+    }
+
+    await supabase.from('bets').insert({
+      match_id: matchId,
+      user_id: userId,
+      team,
+      condition,
+      amount
+    });
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `✅ 下注成功\n📋 ${match.label}\n👤 ${user.nickname}\n⚽ ${team} ${condition}\n💰 ${amount}`
+    });
+  }
+
+  // ── 我的下注
+  if (text === '我的下注紀錄') {
+    const { data: bets } = await supabase
+      .from('bets')
+      .select('*, matches(label)')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (!bets?.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '你還沒有任何下注紀錄'
+      });
+    }
+
+    const msg = bets.map(b =>
+      `#${b.match_id} ${b.matches.label}\n  ${b.team} ${b.condition} $${b.amount}`
+    ).join('\n\n');
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: `🎯 ${user.nickname} 的下注紀錄\n\n${msg}`
+    });
+  }
+
+  // ── 賽事列表
+  if (text === '賽事列表') {
+    const { data: matches } = await supabase
+      .from('matches')
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (!matches?.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '目前沒有賽事'
+      });
+    }
+
+    const msg = matches.map(m =>
+      `#${m.id} ${m.match_date} ${m.label}`
+    ).join('\n');
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `⚽ 賽事列表\n\n${msg}`
+    });
+  }
+
+  // ── 查看場次 #3
+  if (text.startsWith('查看場次')) {
+    const matchId = parseInt(text.replace('查看場次 #', ''));
+
+    const { data: match } = await supabase
+      .from('matches')
+      .select('*')
+      .eq('id', matchId)
+      .single();
+
+    const { data: bets } = await supabase
+      .from('bets')
+      .select('*, users(nickname)')
+      .eq('match_id', matchId)
+      .order('created_at', { ascending: true });
+
+    const { data: results } = await supabase
+      .from('results')
+      .select('*, users(nickname)')
+      .eq('match_id', matchId);
+
+    if (!bets?.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: `#${matchId} ${match?.label}\n\n尚無下注紀錄`
+      });
+    }
+
+    // 下注紀錄
+    const betMsg = bets.map(b =>
+      `${b.users.nickname}：${b.team} ${b.condition} $${b.amount}`
+    ).join('\n');
+
+    // 統計結果
+    let resultMsg = '';
+    if (results?.length) {
+      resultMsg = '\n\n📊 統計結果：\n' + results.map(r =>
+        `${r.users.nickname}：${r.description} ${r.amount > 0 ? '+' : ''}${r.amount}`
+      ).join('\n');
+    }
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `⚽ #${matchId} ${match.label}\n\n🎯 下注紀錄：\n${betMsg}${resultMsg}`
+    });
+  }
+
+  // ════════════════════════════════
+  // 以下為管理員指令
+  // ════════════════════════════════
+
+  if (!user.is_admin) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '⚽ 一般指令：\n\n• 下注 #場次 隊伍 條件 金額\n• 我的下注紀錄\n• 賽事下注紀錄\n\n🙉管理員指令：\n\n• 建立 比賽日期 名稱\n(ex.建立 2026-06-20 A隊vsB隊)\n• 統計 #場次 暱稱 金額\n• 結算 #場次'
+    });
+  }
+
+  // ── 建立賽事（管理員）
+  if (text.startsWith('建立')) {
+  const parts = text.replace('建立', '').trim().split(' ');
+  
+  if (parts.length < 2) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '格式：建立 日期 對戰\n範例：建立 2026-06-20 阿根廷vs法國'
+    });
+  }
+
+  const matchDate = parts[0];
+  const label = parts.slice(1).join(' ');
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(matchDate)) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '日期格式錯誤，請用 YYYY-MM-DD\n範例：2026-06-20'
+    });
+  }
+
+  const { data: match } = await supabase
+    .from('matches')
+    .insert({ label, match_date: matchDate })
+    .select()
+    .single();
+
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 足球投注 BOT\n\n📋 可用指令：\n• 下注 隊伍 金額\n• 我的下注\n• 比例\n• 結算 隊伍\n\n💡 範例：下注 曼聯 100'
+    text: `✅ 賽事已建立\n#${match.id} ${match.label}\n🗓️ ${matchDate}`
   });
 }
 
+  // ── 統計 #3 禿頭 +750（管理員）
+  if (text.startsWith('統計')) {
+    const parts = text.split(' ');
+    // parts: ['統計', '#3', '禿頭', '+750']
+    if (parts.length !== 4) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '格式錯誤\n正確格式：統計 #場次 暱稱 金額\n範例：統計 #3 禿頭 +750'
+      });
+    }
+
+    const matchId = parseInt(parts[1].replace('#', ''));
+    const nickname = parts[2];
+    const amountStr = parts[3];
+    const amount = parseInt(amountStr);
+
+    // 找用戶
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('*')
+      .eq('nickname', nickname)
+      .single();
+
+    if (!targetUser) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: `找不到用戶：${nickname}`
+      });
+    }
+
+    const { data: match } = await supabase
+      .from('matches')
+      .select('*')
+      .eq('id', matchId)
+      .single();
+
+    if (!match) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: `找不到場次 #${matchId}`
+      });
+    }
+
+    await supabase.from('results').insert({
+      match_id: matchId,
+      user_id: targetUser.id,
+      description: amountStr,
+      amount
+    });
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `✅ 統計已記錄\n#${matchId} ${match.label}\n${nickname}：${amountStr}`
+    });
+  }
+
+  // ── 結算場次（管理員）
+  if (text.startsWith('結算')) {
+    const matchId = parseInt(text.replace('結算 #', ''));
+
+    await supabase
+      .from('matches')
+      .update({ status: 'closed' })
+      .eq('id', matchId);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: `🔒 場次 #${matchId} 已關閉`
+    });
+  }
+
+  // 預設回覆
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '⚽ 一般指令：\n\n• 下注 #場次 隊伍 條件 金額\n• 我的下注紀錄\n• 賽事下注紀錄\n\n🙉管理員指令：\n\n• 建立 比賽日期 名稱\n(ex.建立 2026-06-20 A隊vsB隊)\n• 統計 #場次 暱稱 金額\n• 結算 #場次'
+  });
+}
+
+// ────────────────────────────────────────
+async function getUser(userId) {
+  const { data } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .single();
+  return data;
+}
+
+async function ensureUser(userId) {
+  let name = '匿名用戶';
+  try {
+    const profile = await client.getProfile(userId);
+    if (profile?.displayName) name = profile.displayName;
+  } catch (e) {
+    console.error('getProfile 失敗：', e.message);
+  }
+
+  await supabase.from('users').upsert({ id: userId, name }, { ignoreDuplicates: true });
+}
+
+async function setupRichMenu() {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  
+  if (!token) {
+    console.error('❌ 環境變數 LINE_CHANNEL_ACCESS_TOKEN 未設定');
+    return;
+  }
+
+  try {
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const richMenu = {
+      size: { width: 2500, height: 1686 },
+      selected: true,
+      name: '主選單',
+      chatBarText: '哇嘎哇嘎⚽功能選單',
+      areas: [
+        { bounds: { x: 0,    y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽事列表' } },
+        { bounds: { x: 833,  y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽前分析' } },
+        { bounds: { x: 1666, y: 0,   width: 834, height: 843 }, action: { type: 'message', text: '小組排行' } },
+        { bounds: { x: 0,    y: 843, width: 833, height: 843 }, action: { type: 'message', text: '我的下注紀錄' } },
+        { bounds: { x: 833,  y: 843, width: 833, height: 843 }, action: { type: 'message', text: '賽事下注紀錄' } },
+        { bounds: { x: 1666, y: 843, width: 834, height: 843 }, action: { type: 'message', text: '輸贏統計' } },
+      ]
+    };
+
+    // 建立 Rich Menu
+    const createRes = await axios.post(
+      'https://api.line.me/v2/bot/richmenu',
+      richMenu,
+      { headers }
+    );
+    const richMenuId = createRes.data.richMenuId;
+    console.log('✅ Rich Menu 建立完成:', richMenuId);
+
+    // 上傳圖片（需要 2500x1686 的 PNG 圖片）
+    if (fs.existsSync('./menu1.png')) {
+      const imageBuffer = fs.readFileSync('./menu1.png');
+
+      await axios.post(
+        `https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`,
+        imageBuffer,
+        { headers: { ...headers, 'Content-Type': 'image/png' } }
+      );
+      console.log('✅ Rich Menu 圖片上傳完成');
+    } else {
+      console.warn('⚠️ menu.png 不存在，無法完成設定。請準備 2500x1686 的 PNG 圖片');
+      return;
+    }
+
+    // 設為預設
+    await axios.post(
+      `https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`,
+      {},
+      { headers }
+    );
+    console.log('✅ Rich Menu 已設為預設');
+
+  } catch (error) {
+    console.error('❌ Rich Menu 設定失敗：', error.response?.data || error.message);
+  }
+}
+
+setupRichMenu().catch(console.error);
 app.listen(8686, () => console.log('running'));
