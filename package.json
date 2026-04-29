@@ -11,6 +11,7 @@
     "@line/bot-sdk": "^7.7.0",
     "@supabase/supabase-js": "^2.39.3",
     "axios": "^1.15.2",
+    "dayjs": "^1.11.20",
     "dotenv": "^16.3.1",
     "express": "^5.2.1"
   },

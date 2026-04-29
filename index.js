@@ -5,8 +5,9 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const fs = require('fs');
 const FormData = require('form-data');
-
+const dayjs = require('dayjs'); 
 const app = express();
+const { getTeamNameZh } = require('./teamName.js');
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -15,6 +16,10 @@ const config = {
 
 const client = new line.Client(config);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// football-data.org API 配置
+const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
+const FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4';
 
 app.use('/webhook', line.middleware(config));
 app.use(express.json());
@@ -98,22 +103,22 @@ async function handleEvent(event) {
       });
     }
 
-    const matchId = parseInt(parts[1].replace('#', ''));
+    const seqNo = parseInt(parts[1].replace('#', ''));
     const team = parts[2];
     const condition = parts[3];
     const amount = parseInt(parts[4]);
 
-    if (isNaN(matchId) || isNaN(amount)) {
+    if (isNaN(seqNo) || isNaN(amount)) {
       return client.replyMessage(event.replyToken, {
         type: 'text', text: '場次或金額格式錯誤'
       });
     }
 
-    // 確認場次存在且開放
+    // 確認場次存在且開放（使用 SeqNo 映射內部 match id）
     const { data: match } = await supabase
       .from('matches')
       .select('*')
-      .eq('id', matchId)
+      .eq('seq_no', seqNo)
       .single();
 
     if (!match) {
@@ -166,35 +171,39 @@ async function handleEvent(event) {
 
   // ── 賽事列表
   if (text === '賽事列表') {
-    const { data: matches } = await supabase
-      .from('matches')
-      .select('*')
-      .order('id', { ascending: true });
+    try {
+      const matches = await getWeeklyMatches();
 
-    if (!matches?.length) {
+      if (!matches || matches.length === 0) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text', text: '本週沒有世足賽事'
+        });
+      }
+
+      const msg = matches.map(m =>
+        `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)|| 'TBD'} vs ${getTeamNameZh(m.away_team_name)|| 'TBD'}`
+      ).join('\n');
+
       return client.replyMessage(event.replyToken, {
-        type: 'text', text: '目前沒有賽事'
+        type: 'text',
+        text: `⚽ 本週世足賽事\n\n${msg}`
+      });
+    } catch (error) {
+      console.error('Error fetching matches:', error);
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '❌ 無法獲取賽事資訊，請稍後再試'
       });
     }
-
-    const msg = matches.map(m =>
-      `#${m.id} ${m.match_date} ${m.label}`
-    ).join('\n');
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `⚽ 賽事列表\n\n${msg}`
-    });
   }
 
   // ── 查看場次 #3
   if (text.startsWith('查看場次')) {
-    const matchId = parseInt(text.replace('查看場次 #', ''));
+    const seqNo = parseInt(text.replace('查看場次 #', ''));
 
     const { data: match } = await supabase
       .from('matches')
       .select('*')
-      .eq('id', matchId)
+      .eq('seq_no', seqNo)
       .single();
 
     const { data: bets } = await supabase
@@ -240,117 +249,133 @@ async function handleEvent(event) {
   if (!user.is_admin) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '⚽ 一般指令：\n\n• 下注 #場次 隊伍 條件 金額\n• 我的下注紀錄\n• 賽事下注紀錄\n\n🙉管理員指令：\n\n• 建立 比賽日期 名稱\n(ex.建立 2026-06-20 A隊vsB隊)\n• 統計 #場次 暱稱 金額\n• 結算 #場次'
+      text: '⚽ 可用指令：\n\n• 賽事列表\n• 下注 #場次 隊伍 條件 金額\n• 我的下注紀錄\n\n範例：下注 #1 阿根廷 全場勝 500'
     });
   }
 
-  // ── 建立賽事（管理員）
-  if (text.startsWith('建立')) {
-  const parts = text.replace('建立', '').trim().split(' ');
-  
-  if (parts.length < 2) {
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '格式：建立 日期 對戰\n範例：建立 2026-06-20 阿根廷vs法國'
-    });
-  }
-
-  const matchDate = parts[0];
-  const label = parts.slice(1).join(' ');
-
-  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!dateRegex.test(matchDate)) {
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '日期格式錯誤，請用 YYYY-MM-DD\n範例：2026-06-20'
-    });
-  }
-
-  const { data: match } = await supabase
-    .from('matches')
-    .insert({ label, match_date: matchDate })
-    .select()
-    .single();
-
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: `✅ 賽事已建立\n#${match.id} ${match.label}\n🗓️ ${matchDate}`
-  });
-}
-
-  // ── 統計 #3 禿頭 +750（管理員）
-  if (text.startsWith('統計')) {
-    const parts = text.split(' ');
-    // parts: ['統計', '#3', '禿頭', '+750']
-    if (parts.length !== 4) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '格式錯誤\n正確格式：統計 #場次 暱稱 金額\n範例：統計 #3 禿頭 +750'
-      });
-    }
-
-    const matchId = parseInt(parts[1].replace('#', ''));
-    const nickname = parts[2];
-    const amountStr = parts[3];
-    const amount = parseInt(amountStr);
-
-    // 找用戶
-    const { data: targetUser } = await supabase
-      .from('users')
-      .select('*')
-      .eq('nickname', nickname)
-      .single();
-
-    if (!targetUser) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text', text: `找不到用戶：${nickname}`
-      });
-    }
-
-    const { data: match } = await supabase
-      .from('matches')
-      .select('*')
-      .eq('id', matchId)
-      .single();
-
-    if (!match) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text', text: `找不到場次 #${matchId}`
-      });
-    }
-
-    await supabase.from('results').insert({
-      match_id: matchId,
-      user_id: targetUser.id,
-      description: amountStr,
-      amount
-    });
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: `✅ 統計已記錄\n#${matchId} ${match.label}\n${nickname}：${amountStr}`
-    });
-  }
-
-  // ── 結算場次（管理員）
-  if (text.startsWith('結算')) {
-    const matchId = parseInt(text.replace('結算 #', ''));
-
-    await supabase
-      .from('matches')
-      .update({ status: 'closed' })
-      .eq('id', matchId);
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text', text: `🔒 場次 #${matchId} 已關閉`
-    });
-  }
-
+  // ────────────────────────────────────────
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 一般指令：\n\n• 下注 #場次 隊伍 條件 金額\n• 我的下注紀錄\n• 賽事下注紀錄\n\n🙉管理員指令：\n\n• 建立 比賽日期 名稱\n(ex.建立 2026-06-20 A隊vsB隊)\n• 統計 #場次 暱稱 金額\n• 結算 #場次'
+    text: '⚽ 可用指令：\n\n• 賽事列表\n• 下注 #場次 隊伍 條件 金額\n• 我的下注紀錄\n\n範例：下注 #1 阿根廷 全場勝 500'
   });
+}
+
+// ────────────────────────────────────────
+async function getWeeklyMatches() {
+  if (!FOOTBALL_DATA_API_KEY) {
+    throw new Error('FOOTBALL_DATA_API_KEY 未設定');
+  }
+
+  try {
+    // 先檢查 Supabase 是否有資料且在 30 分鐘內更新過
+    const { data: cached } = await supabase
+      .from('matches')
+      .select('updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(1);
+
+    const lastUpdated = cached?.[0]?.updated_at;
+    const isStale = !lastUpdated ||
+      dayjs().diff(dayjs(lastUpdated), 'minute') > 30;
+
+    if (!isStale) {
+      // 直接從 Supabase 拿，不打外部 API
+      console.log('使用 cache，跳過外部 API');
+      const { data, error } = await supabase
+        .from('matches')
+        .select('*')
+        .order('seq_no', { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    }
+
+    // 超過 30 分鐘，重新從外部 API sync
+    console.log('cache 過期，重新從 football-data.org 拉資料');
+    const headers = { 'X-Auth-Token': FOOTBALL_DATA_API_KEY };
+    const response = await axios.get(
+      `${FOOTBALL_DATA_BASE_URL}/competitions/WC/matches`,
+      { headers }
+    );
+
+    const allMatches = response.data.matches || [];
+
+    if (allMatches.length === 0) return [];
+
+    await syncMatchesToDatabase(allMatches);
+
+    const { data: storedMatches, error } = await supabase
+      .from('matches')
+      .select('*')
+      .order('seq_no', { ascending: true });
+
+    if (error) {
+      console.error('Error reading synced matches from database:', error.message);
+      throw error;
+    }
+
+    return storedMatches || [];
+
+  } catch (error) {
+    console.error('Error fetching from football-data.org:', error.message);
+    throw error;
+  }
+}
+
+async function syncMatchesToDatabase(apiMatches) {
+  if (!apiMatches || apiMatches.length === 0) return;
+
+  const rows = apiMatches.map((match, index) => {
+    const homeName = match.homeTeam?.name || 'TBD';
+    const awayName = match.awayTeam?.name || 'TBD';
+    return {
+      id: match.id,
+      seq_no: index + 1,
+      match_date: dayjs(match.utcDate).format('YYYY-MM-DD HH:mm'),
+      label: `${homeName} vs ${awayName}`,
+      home_team_name: homeName,
+      away_team_name: awayName,
+      status: match.status,
+      stage: match.stage,
+      group_name: match.group,
+      competition_name: match.competition?.name || 'FIFA World Cup',
+      last_updated: match.lastUpdated,
+      raw_data: match
+    };
+  });
+
+  const { data: existing } = await supabase
+    .from('matches')
+    .select('id, seq_no, match_date, label, home_team_name, away_team_name, status, stage, group_name, competition_name, last_updated')
+    .in('id', apiMatches.map(m => m.id));
+
+  const toUpsert = rows.filter(row => {
+    const exist = existing?.find(item => item.id === row.id);
+    if (!exist) return true;
+    return (
+      exist.seq_no !== row.seq_no ||
+      exist.match_date !== row.match_date ||
+      exist.label !== row.label ||
+      exist.home_team_name !== row.home_team_name ||
+      exist.away_team_name !== row.away_team_name ||
+      exist.status !== row.status ||
+      exist.stage !== row.stage ||
+      exist.group_name !== row.group_name ||
+      exist.competition_name !== row.competition_name ||
+      exist.last_updated !== row.last_updated
+    );
+  });
+
+  if (toUpsert.length) {
+    const { error } = await supabase
+      .from('matches')
+      .upsert(toUpsert, { onConflict: 'id' });
+if (error) {
+      console.error('Error syncing matches to database:', error.message);
+      throw error;
+    }
+  }
 }
 
 // ────────────────────────────────────────
