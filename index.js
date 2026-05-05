@@ -265,7 +265,7 @@ async function handleEvent(event) {
 async function getWeeklyMatches() {
   const now = dayjs('2026-06-11');
   const startOfToday = now.startOf('day').format('YYYY-MM-DD HH:mm');
-  const endOfWeek = now.add(7, 'day').endOf('day').format('YYYY-MM-DD HH:mm');
+  const endOfWeek = now.add(3, 'day').endOf('day').format('YYYY-MM-DD HH:mm');
 
   const { data, error } = await supabase
     .from('matches')
