@@ -9,6 +9,12 @@ const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 async function syncMatchesToDatabase(apiMatches) {
   if (!apiMatches?.length) return;
 
+  apiMatches.forEach(match => {
+  console.log('原始 utcDate:', match.utcDate);
+  console.log('dayjs 解析後:', dayjs(match.utcDate).format('YYYY-MM-DD HH:mm'));
+  console.log('+8 後:', dayjs(match.utcDate).add(8, 'hour').format('YYYY-MM-DD HH:mm'));
+  });
+
 
   const rows = apiMatches.map((match, index) => ({
     id: match.id,
@@ -23,9 +29,11 @@ async function syncMatchesToDatabase(apiMatches) {
     competition_name: match.competition?.name || 'FIFA World Cup',
     last_updated: match.lastUpdated,
     raw_data: match
-  }));
+  })
+);
 
-  const { error } = await supabase
+
+const { error } = await supabase
     .from('matches')
     .upsert(rows, { onConflict: 'id' });
 
