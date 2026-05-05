@@ -263,119 +263,13 @@ async function handleEvent(event) {
 
 // ────────────────────────────────────────
 async function getWeeklyMatches() {
-  if (!FOOTBALL_DATA_API_KEY) {
-    throw new Error('FOOTBALL_DATA_API_KEY 未設定');
-  }
-
-  try {
-    // 先檢查 Supabase 是否有資料且在 30 分鐘內更新過
-    const { data: cached } = await supabase
-      .from('matches')
-      .select('updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(1);
-
-    const lastUpdated = cached?.[0]?.updated_at;
-    const isStale = !lastUpdated ||
-      dayjs().diff(dayjs(lastUpdated), 'minute') > 30;
-
-    if (!isStale) {
-      // 直接從 Supabase 拿，不打外部 API
-      console.log('使用 cache，跳過外部 API');
-      const { data, error } = await supabase
-        .from('matches')
-        .select('*')
-        .order('seq_no', { ascending: true });
-
-      if (error) throw error;
-      return data || [];
-    }
-
-    // 超過 30 分鐘，重新從外部 API sync
-    console.log('cache 過期，重新從 football-data.org 拉資料');
-    const headers = { 'X-Auth-Token': FOOTBALL_DATA_API_KEY };
-    const response = await axios.get(
-      `${FOOTBALL_DATA_BASE_URL}/competitions/WC/matches`,
-      { headers }
-    );
-
-    const allMatches = response.data.matches || [];
-
-    if (allMatches.length === 0) return [];
-
-    await syncMatchesToDatabase(allMatches);
-
-    const { data: storedMatches, error } = await supabase
-      .from('matches')
-      .select('*')
-      .order('seq_no', { ascending: true });
-
-    if (error) {
-      console.error('Error reading synced matches from database:', error.message);
-      throw error;
-    }
-
-    return storedMatches || [];
-
-  } catch (error) {
-    console.error('Error fetching from football-data.org:', error.message);
-    throw error;
-  }
-}
-
-async function syncMatchesToDatabase(apiMatches) {
-  if (!apiMatches || apiMatches.length === 0) return;
-
-  const rows = apiMatches.map((match, index) => {
-    const homeName = match.homeTeam?.name || 'TBD';
-    const awayName = match.awayTeam?.name || 'TBD';
-    return {
-      id: match.id,
-      seq_no: index + 1,
-      match_date: dayjs(match.utcDate).format('YYYY-MM-DD HH:mm'),
-      label: `${homeName} vs ${awayName}`,
-      home_team_name: homeName,
-      away_team_name: awayName,
-      status: match.status,
-      stage: match.stage,
-      group_name: match.group,
-      competition_name: match.competition?.name || 'FIFA World Cup',
-      last_updated: match.lastUpdated,
-      raw_data: match
-    };
-  });
-
-  const { data: existing } = await supabase
+  const { data, error } = await supabase
     .from('matches')
-    .select('id, seq_no, match_date, label, home_team_name, away_team_name, status, stage, group_name, competition_name, last_updated')
-    .in('id', apiMatches.map(m => m.id));
+    .select('*')
+    .order('seq_no', { ascending: true });
 
-  const toUpsert = rows.filter(row => {
-    const exist = existing?.find(item => item.id === row.id);
-    if (!exist) return true;
-    return (
-      exist.seq_no !== row.seq_no ||
-      exist.match_date !== row.match_date ||
-      exist.label !== row.label ||
-      exist.home_team_name !== row.home_team_name ||
-      exist.away_team_name !== row.away_team_name ||
-      exist.status !== row.status ||
-      exist.stage !== row.stage ||
-      exist.group_name !== row.group_name ||
-      exist.competition_name !== row.competition_name ||
-      exist.last_updated !== row.last_updated
-    );
-  });
-
-  if (toUpsert.length) {
-    const { error } = await supabase
-      .from('matches')
-      .upsert(toUpsert, { onConflict: 'id' });
-if (error) {
-      console.error('Error syncing matches to database:', error.message);
-      throw error;
-    }
-  }
+  if (error) throw error;
+  return data || [];
 }
 
 // ────────────────────────────────────────
