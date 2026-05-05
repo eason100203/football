@@ -2,8 +2,6 @@ require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const dayjs = require('dayjs');
-const utc = require('dayjs/plugin/utc');
-const timezone = require('dayjs/plugin/timezone');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
@@ -11,13 +9,11 @@ const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 async function syncMatchesToDatabase(apiMatches) {
   if (!apiMatches?.length) return;
 
-  dayjs.extend(utc);
-  dayjs.extend(timezone);
 
   const rows = apiMatches.map((match, index) => ({
     id: match.id,
     seq_no: index + 1,
-    match_date: dayjs(match.utcDate).tz('Asia/Taipei').format('YYYY-MM-DD HH:mm'),
+    match_date: dayjs(match.utcDate).add(8, 'hour').format('YYYY-MM-DD HH:mm'), // 轉換為台北時間
     label: `${match.homeTeam?.name || 'TBD'} vs ${match.awayTeam?.name || 'TBD'}`,
     home_team_name: match.homeTeam?.name || 'TBD',
     away_team_name: match.awayTeam?.name || 'TBD',
