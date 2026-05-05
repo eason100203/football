@@ -263,10 +263,16 @@ async function handleEvent(event) {
 
 // ────────────────────────────────────────
 async function getWeeklyMatches() {
+  const now = dayjs();
+  const startOfToday = now.startOf('day').format('YYYY-MM-DD HH:mm');
+  const endOfWeek = now.add(7, 'day').endOf('day').format('YYYY-MM-DD HH:mm');
+
   const { data, error } = await supabase
     .from('matches')
     .select('*')
-    .order('seq_no', { ascending: true });
+    .gte('match_date', startOfToday)
+    .lte('match_date', endOfWeek)
+    .order('match_date', { ascending: true });
 
   if (error) throw error;
   return data || [];
