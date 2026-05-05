@@ -29,7 +29,7 @@ async function syncMatchesToDatabase(apiMatches) {
     .upsert(rows, { onConflict: 'id' });
 
   if (error) throw error;
-  console.log(`✅ 同步完成，共 ${rows.length} 場比賽`);
+  console.log(`✅ 同步完成，共 ${rows.length} 場比賽 `);
 }
 
 async function main() {
