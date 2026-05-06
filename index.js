@@ -273,16 +273,35 @@ async function handleEvent(event) {
  }
 
  if (user.mode === 'ai') {
-  try {
-  const matches = await getAllMatches();
-  const matchInfo = matches.map(m =>
-    `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)} vs ${getTeamNameZh(m.away_team_name)}`
-  ).join('\n');
+  // 1. 先判斷使用者是否在找「賽程」或「時間」
+  const lowercaseText = text.toLowerCase();
+  const isAskingSchedule = lowercaseText.includes('賽程') || 
+                           lowercaseText.includes('時間') || 
+                           lowercaseText.includes('什麼時候');
 
-  const aiReply = await getMatchAnalysis(userId, text, matchInfo);
+  if (isAskingSchedule) {
     return client.replyMessage(event.replyToken, {
-      type: 'text', text: aiReply.slice(0, 3000)
+      type: 'text',
+      text: '🤖 進入分析模式時無法查看完整賽程。\n\n請先輸入「離開」退出 AI 模式，並輸入「賽事列表」查詢。取得【比賽編號】後，再回來輸入編號，我能為您做深度分析！'
     });
+  }
+
+  try {
+    // 2. 篩選「三天內」的賽事資料 (大幅節省 Token)
+    const allMatches = await getWeeklyMatches();
+   
+    // 將資料格式極簡化，只給編號、時間、對戰隊伍
+    const matchInfo = allMatches.map(m => 
+      `#${m.seq_no} ${m.match_date.slice(5)} ${getTeamNameZh(m.home_team_name)}vs${getTeamNameZh(m.away_team_name)}`
+    ).join('\n');
+
+    // 3. 呼叫 AI
+    const aiReply = await getMatchAnalysis(userId, text, matchInfo);
+    
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: aiReply.slice(0, 1000)
+    });
+
   } catch (error) {
     console.error('AI 錯誤:', error.message);
     return client.replyMessage(event.replyToken, {
