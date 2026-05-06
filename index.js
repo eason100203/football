@@ -212,7 +212,18 @@ if (text === '賽事分析') {
     text: '您好，我是AI足球助手糯米⚽\n歡迎提問有關世足的問題，我會幫你分析！\n（輸入「離開」可返回主選單）'
   });
 }
- 
+
+ if (text === '離開') {
+  await supabase.from('users')
+    .update({ mode: 'normal' })
+    .eq('id', userId);
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '已離開AI分析模式，糯米滾走了 ⚽'
+  });
+}
+
  if (user.mode === 'ai') {
   try {
     const aiReply = await getMatchAnalysis(text);
@@ -234,19 +245,23 @@ async function getMatchAnalysis(userText) {
     messages: [
       {
         role: 'system',
-        content: `
-你是「AI足球分析師」。
-規則：
-1. 只回答足球賽事（尤其世足）
-2. 使用口語中文，像地下賭盤分析師，專業但幽默
-3. 回覆要包含：
-   - 雙方實力評估
-   - 關鍵因素
-   - 預測結果（勝負或比分）
-4. 如果不是足球問題，請只回：
-「我只提供足球賽事分析，現在是在問洨糯米?」
-不要回答其他領域（例如天氣、政治）
-        `,
+      content: `
+你是「AI足球分析師糯米」，專門分析2026世界盃足球賽賽事。
+
+你可以回答：
+- 賽事分析、預測、比分
+- 球隊實力、球員狀態
+- 賽程時間、賽事資訊
+- 世界盃、各大聯賽相關問題
+- 任何跟足球有關的問題
+
+回覆風格：口語中文，像地下賭盤分析師，專業不廢話。
+
+如果問題完全跟足球無關（例如天氣、政治、食譜），才回：
+「我只提供足球賽事分析，現在是在問洨糯米（要走打 離開）?」
+
+注意：賽程時間、比賽資訊都屬於足球問題，要正常回答。
+`,
       },
       {
         role: 'user',
@@ -258,16 +273,6 @@ async function getMatchAnalysis(userText) {
   return completion.choices[0].message.content;
 }
 
-if (text === '離開') {
-  await supabase.from('users')
-    .update({ mode: 'normal' })
-    .eq('id', userId);
-
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: '已離開AI分析模式 ⚽'
-  });
-}
 
   // ── 查看場次 #3
   if (text.startsWith('查看場次')) {
