@@ -33,6 +33,7 @@ app.post('/webhook', async (req, res) => {
 
 // ────────────────────────────────────────
 async function handleEvent(event) {
+  const chatHistory = {}; 
   const userId = event.source.userId;
   if (!userId) return;
 
@@ -171,114 +172,6 @@ async function handleEvent(event) {
     });
   }
 
-  // ── 賽事列表
-  if (text === '賽事列表') {
-    try {
-      const matches = await getWeeklyMatches();
-
-      if (!matches || matches.length === 0) {
-        return client.replyMessage(event.replyToken, {
-          type: 'text', text: '三日內沒有世足賽事'
-        });
-      }
-
-      const msg = matches.map(m =>
-        `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)|| 'TBD'} vs ${getTeamNameZh(m.away_team_name)|| 'TBD'}`
-      ).join('\n');
-
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: `⚽ 三日內世足賽事\n\n${msg}`
-      });
-    } catch (error) {
-      console.error('Error fetching matches:', error);
-      return client.replyMessage(event.replyToken, {
-        type: 'text', text: '❌ 無法獲取賽事資訊，請稍後再試'
-      });
-    }
-  }
-  // ── 賽事分析
-if (text === '賽事分析') {
-  const { data, error } = await supabase.from('users')
-    .update({ mode: 'ai' })
-    .eq('id', userId);
-  
-  console.log('userId:', userId);
-  console.log('update error:', error);
-  console.log('update data:', data);
-
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: '您好，我是AI足球助手糯米⚽\n歡迎提問有關世足的問題，我會幫你分析！\n（輸入「離開」可返回主選單）'
-  });
-}
-
- if (text === '離開') {
-  await supabase.from('users')
-    .update({ mode: 'normal' })
-    .eq('id', userId);
-
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: '已離開AI分析模式，糯米滾走了 ⚽'
-  });
-}
-
- if (user.mode === 'ai') {
-  try {
-    const aiReply = await getMatchAnalysis(text);
-    return client.replyMessage(event.replyToken, {
-      type: 'text', text: aiReply.slice(0, 3000)
-    });
-  } catch (error) {
-    console.error('AI 錯誤:', error.message);
-    return client.replyMessage(event.replyToken, {
-      type: 'text', text: '❌ AI 助手暫時無法使用，請稍後再試'
-    });
-  }
-}
-
-async function getMatchAnalysis(userText) {
-  // 抓最新賽程
-  const matches = await getAllMatches();
-  const matchInfo = matches.length > 0 
-    ? matches.map(m => 
-        `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)} vs ${getTeamNameZh(m.away_team_name)}`
-      ).join('\n')
-    : '目前無近期賽事';
-
-  const completion = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    temperature: 0.7,
-    messages: [
-      {
-        role: 'system',
-        content: `
-你是「AI足球分析師糯米」。
-
-📅 2026世界盃賽程資訊：
-${matchInfo}
-
-你可以回答：
-- 賽程時間、賽事資訊（根據上方資料）
-- 球隊實力分析、預測比分
-- 任何足球相關問題
-
-回覆風格：口語中文，專業且不廢話。
-
-完全跟足球無關才回：「我只提供足球問題，現在是在問洨糯米（要走打 離開）?」
-        `,
-      },
-      {
-        role: 'user',
-        content: userText,
-      },
-    ],
-  });
-
-  return completion.choices[0].message.content;
-}
-
   // ── 查看場次 #3
   if (text.startsWith('查看場次')) {
     const seqNo = parseInt(text.replace('查看場次 #', ''));
@@ -325,6 +218,79 @@ ${matchInfo}
     });
   }
 
+    // ── 賽事列表
+  if (text === '賽事列表') {
+    try {
+      const matches = await getWeeklyMatches();
+
+      if (!matches || matches.length === 0) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text', text: '三日內沒有世足賽事'
+        });
+      }
+
+      const msg = matches.map(m =>
+        `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)|| 'TBD'} vs ${getTeamNameZh(m.away_team_name)|| 'TBD'}`
+      ).join('\n');
+
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `⚽ 三日內世足賽事\n\n${msg}`
+      });
+    } catch (error) {
+      console.error('Error fetching matches:', error);
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '❌ 無法獲取賽事資訊，請稍後再試'
+      });
+    }
+  }
+  // ── 賽事分析
+  if (text === '賽事分析') {
+  const { data, error } = await supabase.from('users')
+    .update({ mode: 'ai' })
+    .eq('id', userId);
+  
+  console.log('userId:', userId);
+  console.log('update error:', error);
+  console.log('update data:', data);
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '您好，我是AI足球助手糯米⚽\n歡迎提問有關世足的問題，我會幫你分析！\n（輸入「離開」可返回主選單）'
+  });
+  }
+
+  if (text === '離開') {
+  delete chatHistory[userId]; 
+  await supabase.from('users')
+    .update({ mode: 'normal' })
+    .eq('id', userId);
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '已離開AI分析模式，糯米滾走了 ⚽'
+  });
+ }
+
+ if (user.mode === 'ai') {
+  try {
+  const matches = await getAllMatches();
+  const matchInfo = matches.map(m =>
+    `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)} vs ${getTeamNameZh(m.away_team_name)}`
+  ).join('\n');
+
+  const aiReply = await getMatchAnalysis(userId, text, matchInfo);
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: aiReply.slice(0, 3000)
+    });
+  } catch (error) {
+    console.error('AI 錯誤:', error.message);
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: '❌ AI 助手暫時無法使用，請稍後再試'
+    });
+  }
+}
+
   // ════════════════════════════════
   // 以下為管理員指令
   // ════════════════════════════════
@@ -336,7 +302,7 @@ ${matchInfo}
     });
   }
 
-  // ────────────────────────────────────────
+
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
@@ -344,7 +310,7 @@ ${matchInfo}
   });
 }
 
-// ────────────────────────────────────────
+// ───────────────────methods────────────────────
 async function getWeeklyMatches() {
   const now = dayjs();
   const startOfToday = now.startOf('day').format('YYYY-MM-DD HH:mm');
@@ -371,8 +337,37 @@ async function getAllMatches() {
   if (error) throw error;
   return data || [];
 }
+async function getMatchAnalysis(userId, userText, matchInfo) {
+  // 初始化歷史
+  if (!chatHistory[userId]) chatHistory[userId] = [];
 
-// ────────────────────────────────────────
+  // 加入用戶訊息
+  chatHistory[userId].push({ role: 'user', content: userText });
+
+  // 只保留最近10則，避免太長
+  if (chatHistory[userId].length > 10) {
+    chatHistory[userId] = chatHistory[userId].slice(-10);
+  }
+
+  const completion = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    temperature: 0.7,
+    messages: [
+      {
+        role: 'system',
+        content: `你是AI足球分析師糯米。\n\n📅 近期賽程：\n${matchInfo}`
+      },
+      ...chatHistory[userId] // 帶入完整對話歷史
+    ],
+  });
+
+  const reply = completion.choices[0].message.content;
+
+  // 把 AI 回覆也存進歷史
+  chatHistory[userId].push({ role: 'assistant', content: reply });
+
+  return reply;
+}
 async function getUser(userId) {
   const { data } = await supabase
     .from('users')
@@ -381,7 +376,6 @@ async function getUser(userId) {
     .single();
   return data;
 }
-
 async function ensureUser(userId) {
   let name = '匿名用戶';
   try {
@@ -393,7 +387,6 @@ async function ensureUser(userId) {
 
   await supabase.from('users').upsert({ id: userId, name }, { ignoreDuplicates: true });
 }
-
 async function setupRichMenu() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   
@@ -456,6 +449,7 @@ async function setupRichMenu() {
     console.error('❌ Rich Menu 設定失敗：', error.response?.data || error.message);
   }
 }
+//───────────────────────────────────────────────
 
 setupRichMenu().catch(console.error);
 app.listen(8686, () => console.log('running'));
