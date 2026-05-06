@@ -8,11 +8,8 @@ const FormData = require('form-data');
 const dayjs = require('dayjs'); 
 const app = express();
 const { getTeamNameZh } = require('./teamName.js');
-const OpenAI = require('openai');
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const Groq = require('groq-sdk');
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -201,36 +198,44 @@ async function handleEvent(event) {
     }
   }
   // ── 賽事分析
- if (text === '賽事分析') {
-  await supabase.from('users')
+if (text === '賽事分析') {
+  const { data, error } = await supabase.from('users')
     .update({ mode: 'ai' })
     .eq('id', userId);
+  
+  console.log('userId:', userId);
+  console.log('update error:', error);
+  console.log('update data:', data);
 
   return client.replyMessage(event.replyToken, {
     type: 'text',
     text: '您好，我是AI足球助手糯米⚽\n歡迎提問有關世足的問題，我會幫你分析！\n（輸入「離開」可返回主選單）'
   });
-  }
+}
  
-  if (user.mode === 'ai') {
-  const aiReply = await getMatchAnalysis(text);
+ if (user.mode === 'ai') {
+  try {
+    const aiReply = await getMatchAnalysis(text);
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: aiReply.slice(0, 3000)
+    });
+  } catch (error) {
+    console.error('AI 錯誤:', error.message);
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: '❌ AI 助手暫時無法使用，請稍後再試'
+    });
+  }
+}
 
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: aiReply.slice(0, 3000)
-  });
- }
-
-  async function getMatchAnalysis(userText) {
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+async function getMatchAnalysis(userText) {
+  const completion = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
     temperature: 0.7,
     messages: [
       {
         role: 'system',
         content: `
 你是「AI足球分析師」。
-
 規則：
 1. 只回答足球賽事（尤其世足）
 2. 使用口語中文，像地下賭盤分析師，專業但幽默
@@ -238,10 +243,8 @@ async function handleEvent(event) {
    - 雙方實力評估
    - 關鍵因素
    - 預測結果（勝負或比分）
-
 4. 如果不是足球問題，請只回：
-「糯米滾過來啦!我只提供足球賽事分析，現在是在問洨?」
-
+「我只提供足球賽事分析，現在是在問洨糯米?」
 不要回答其他領域（例如天氣、政治）
         `,
       },
