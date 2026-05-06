@@ -31,9 +31,9 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
+let chatHistory = {}; 
 // ────────────────────────────────────────
 async function handleEvent(event) {
-  const chatHistory = {}; 
   const userId = event.source.userId;
   if (!userId) return;
 
@@ -345,7 +345,7 @@ async function getMatchAnalysis(userId, userText, matchInfo) {
   chatHistory[userId].push({ role: 'user', content: userText });
 
   // 只保留最近10則，避免太長
-  if (chatHistory[userId].length > 10) {
+  if (chatHistory[userId].length > 5) {
     chatHistory[userId] = chatHistory[userId].slice(-10);
   }
 
