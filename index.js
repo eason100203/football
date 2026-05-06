@@ -8,6 +8,11 @@ const FormData = require('form-data');
 const dayjs = require('dayjs'); 
 const app = express();
 const { getTeamNameZh } = require('./teamName.js');
+const OpenAI = require('openai');
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -176,7 +181,7 @@ async function handleEvent(event) {
 
       if (!matches || matches.length === 0) {
         return client.replyMessage(event.replyToken, {
-          type: 'text', text: '本週沒有世足賽事'
+          type: 'text', text: '三日內沒有世足賽事'
         });
       }
 
@@ -186,7 +191,7 @@ async function handleEvent(event) {
 
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: `⚽ 本週世足賽事\n\n${msg}`
+        text: `⚽ 三日內世足賽事\n\n${msg}`
       });
     } catch (error) {
       console.error('Error fetching matches:', error);
@@ -195,6 +200,71 @@ async function handleEvent(event) {
       });
     }
   }
+  // ── 賽事分析
+ if (text === '賽事分析') {
+  await supabase.from('users')
+    .update({ mode: 'ai' })
+    .eq('id', userId);
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '您好，我是AI足球助手糯米⚽\n歡迎提問有關世足的問題，我會幫你分析！\n（輸入「離開」可返回主選單）'
+  });
+  }
+ 
+  if (user.mode === 'ai') {
+  const aiReply = await getMatchAnalysis(text);
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: aiReply.slice(0, 3000)
+  });
+ }
+
+  async function getMatchAnalysis(userText) {
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    temperature: 0.7,
+    messages: [
+      {
+        role: 'system',
+        content: `
+你是「AI足球分析師」。
+
+規則：
+1. 只回答足球賽事（尤其世足）
+2. 使用口語中文，像地下賭盤分析師，專業但幽默
+3. 回覆要包含：
+   - 雙方實力評估
+   - 關鍵因素
+   - 預測結果（勝負或比分）
+
+4. 如果不是足球問題，請只回：
+「糯米滾過來啦!我只提供足球賽事分析，現在是在問洨?」
+
+不要回答其他領域（例如天氣、政治）
+        `,
+      },
+      {
+        role: 'user',
+        content: userText,
+      },
+    ],
+  });
+
+  return completion.choices[0].message.content;
+}
+
+if (text === '離開') {
+  await supabase.from('users')
+    .update({ mode: 'normal' })
+    .eq('id', userId);
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '已離開AI分析模式 ⚽'
+  });
+}
 
   // ── 查看場次 #3
   if (text.startsWith('查看場次')) {
@@ -318,7 +388,7 @@ async function setupRichMenu() {
       chatBarText: '哇嘎哇嘎⚽功能選單',
       areas: [
         { bounds: { x: 0,    y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽事列表' } },
-        { bounds: { x: 833,  y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽前分析' } },
+        { bounds: { x: 833,  y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽事分析' } },
         { bounds: { x: 1666, y: 0,   width: 834, height: 843 }, action: { type: 'message', text: '小組排行' } },
         { bounds: { x: 0,    y: 843, width: 833, height: 843 }, action: { type: 'message', text: '我的下注紀錄' } },
         { bounds: { x: 833,  y: 843, width: 833, height: 843 }, action: { type: 'message', text: '賽事下注紀錄' } },
