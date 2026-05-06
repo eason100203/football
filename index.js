@@ -239,29 +239,35 @@ if (text === '賽事分析') {
 }
 
 async function getMatchAnalysis(userText) {
+  // 抓最新賽程
+  const matches = await getAllMatches();
+  const matchInfo = matches.length > 0 
+    ? matches.map(m => 
+        `#${m.seq_no} ${m.match_date} ${getTeamNameZh(m.home_team_name)} vs ${getTeamNameZh(m.away_team_name)}`
+      ).join('\n')
+    : '目前無近期賽事';
+
   const completion = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     temperature: 0.7,
     messages: [
       {
         role: 'system',
-      content: `
-你是「AI足球分析師糯米」，專門分析2026世界盃足球賽賽事。
+        content: `
+你是「AI足球分析師糯米」。
+
+📅 2026世界盃賽程資訊：
+${matchInfo}
 
 你可以回答：
-- 賽事分析、預測、比分
-- 球隊實力、球員狀態
-- 賽程時間、賽事資訊
-- 世界盃、各大聯賽相關問題
-- 任何跟足球有關的問題
+- 賽程時間、賽事資訊（根據上方資料）
+- 球隊實力分析、預測比分
+- 任何足球相關問題
 
-回覆風格：口語中文，像地下賭盤分析師，專業不廢話。
+回覆風格：口語中文，專業且不廢話。
 
-如果問題完全跟足球無關（例如天氣、政治、食譜），才回：
-「我只提供足球賽事分析，現在是在問洨糯米（要走打 離開）?」
-
-注意：賽程時間、比賽資訊都屬於足球問題，要正常回答。
-`,
+完全跟足球無關才回：「我只提供足球問題，現在是在問洨糯米（要走打 離開）?」
+        `,
       },
       {
         role: 'user',
@@ -272,7 +278,6 @@ async function getMatchAnalysis(userText) {
 
   return completion.choices[0].message.content;
 }
-
 
   // ── 查看場次 #3
   if (text.startsWith('查看場次')) {
@@ -341,7 +346,7 @@ async function getMatchAnalysis(userText) {
 
 // ────────────────────────────────────────
 async function getWeeklyMatches() {
-  const now = dayjs('2026-06-11');
+  const now = dayjs();
   const startOfToday = now.startOf('day').format('YYYY-MM-DD HH:mm');
   const endOfWeek = now.add(3, 'day').endOf('day').format('YYYY-MM-DD HH:mm');
 
@@ -350,6 +355,17 @@ async function getWeeklyMatches() {
     .select('*')
     .gte('match_date', startOfToday)
     .lte('match_date', endOfWeek)
+    .order('match_date', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+async function getAllMatches() {
+  
+
+  const { data, error } = await supabase
+    .from('matches')
+    .select('*')
     .order('match_date', { ascending: true });
 
   if (error) throw error;
