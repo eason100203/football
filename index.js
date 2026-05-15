@@ -66,14 +66,14 @@ async function handleEvent(event) {
  if (!user.nickname && !text.startsWith('設定暱稱')) {
   try {
     await client.replyMessage(event.replyToken, [
+       {
+        type: 'text',
+        text: '請先設定暱稱才能使用：\n\n設定暱稱 你的暱稱'
+      },
       {
         type: 'image',
         originalContentUrl: TUTORIAL_IMAGE_URL,
         previewImageUrl: TUTORIAL_IMAGE_URL
-      },
-      {
-        type: 'text',
-        text: '請先設定暱稱才能使用：\n\n設定暱稱 你的暱稱'
       }
     ]);
   } catch (err) {
