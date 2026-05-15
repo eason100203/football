@@ -22,7 +22,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // football-data.org API 配置
 const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 const FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4';
-
+const TUTORIAL_IMAGE_URL =process.env.TUTORIAL_IMAGE_URL
 app.use('/webhook', line.middleware(config));
 app.use(express.json());
 
@@ -64,11 +64,18 @@ async function handleEvent(event) {
 
   // 新用戶還沒設定暱稱，強制引導
   if (!user.nickname && !text.startsWith('設定暱稱')) {
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '請先設定暱稱才能使用：\n\n設定暱稱 你的暱稱'
-    });
+  return client.replyMessage(event.replyToken, [
+  {
+    type: 'image',
+    originalContentUrl: TUTORIAL_IMAGE_URL,
+    previewImageUrl: TUTORIAL_IMAGE_URL
+  },
+  {
+    type: 'text',
+    text: '請先設定暱稱才能使用：\n\n設定暱稱 你的暱稱'
   }
+]);
+}
 
   // ── 設定暱稱
   if (text.startsWith('設定暱稱')) {
