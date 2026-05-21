@@ -624,7 +624,7 @@ async function setupRichMenu() {
       size: { width: 2500, height: 1686 },
       selected: true,
       name: '主選單',
-      chatBarText: '哇嘎哇嘎⚽功能選單',
+      chatBarText: '⚽功能選單',
       areas: [
         { bounds: { x: 0,    y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽事列表' } },
         { bounds: { x: 833,  y: 0,   width: 833, height: 843 }, action: { type: 'message', text: '賽事分析' } },
@@ -645,8 +645,8 @@ async function setupRichMenu() {
     console.log('✅ Rich Menu 建立完成:', richMenuId);
 
     // 上傳圖片（需要 2500x1686 的 PNG 圖片）
-    if (fs.existsSync('./menu1.png')) {
-      const imageBuffer = fs.readFileSync('./menu1.png');
+    if (fs.existsSync('./menu.png')) {
+      const imageBuffer = fs.readFileSync('./menu.png');
 
       await axios.post(
         `https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`,
