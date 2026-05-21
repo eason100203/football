@@ -23,6 +23,12 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 const FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4';
 const TUTORIAL_IMAGE_URL =process.env.TUTORIAL_IMAGE_URL
+
+app.get('/', (req, res) => {
+  console.log('Ping:', new Date().toISOString());
+  res.send('alive');
+});
+
 app.use('/webhook', line.middleware(config));
 app.use(express.json());
 
