@@ -32,6 +32,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 let chatHistory = {}; 
+let userState = {}; // 記錄用戶狀態
 // ────────────────────────────────────────
 async function handleEvent(event) {
   const userId = event.source.userId;
@@ -230,14 +231,37 @@ async function handleEvent(event) {
     });
   }
 
-    // ── 賽事列表
+  // ── 賽事列表
   if (text === '賽事列表') {
+    userState[userId] = 'waiting_for_category';
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '⚽ 請選擇賽事分類：\n\n1️⃣ 今日世足賽事\n2️⃣ 一週內世足賽事\n3️⃣ 全部世足賽事\n\n請輸入 1、2 或 3'
+    });
+  }
+
+  // ── 處理賽事列表分類選擇
+  if (userState[userId] === 'waiting_for_category' && ['1', '2', '3'].includes(text)) {
+    delete userState[userId];
+    
     try {
-      const matches = await getWeeklyMatches();
+      let matches = [];
+      let title = '';
+
+      if (text === '1') {
+        matches = await getTodayMatches();
+        title = '今日賽事';
+      } else if (text === '2') {
+        matches = await getWeeklyMatches();
+        title = '一週賽事';
+      } else if (text === '3') {
+        matches = await getAllMatches();
+        title = '全部賽事';
+      }
 
       if (!matches || matches.length === 0) {
         return client.replyMessage(event.replyToken, {
-          type: 'text', text: '三日內沒有世足賽事'
+          type: 'text', text: `⚽ ${title}\n\n目前沒有賽事`
         });
       }
 
@@ -247,7 +271,7 @@ async function handleEvent(event) {
 
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: `⚽ 三日內世足賽事\n\n${msg}`
+        text: `⚽ ${title}\n\n${msg}`
       });
     } catch (error) {
       console.error('Error fetching matches:', error);
@@ -256,6 +280,147 @@ async function handleEvent(event) {
       });
     }
   }
+
+  // ── 小組排行
+  if (text === '小組排行') {
+    delete userState[userId];
+    try {
+      const standings = await getStandings();
+      if (!standings || standings.length === 0) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '⚽ 小組排行\n\n目前還沒有 standings 資料'
+        });
+      }
+
+      const groups = {};
+      standings.forEach(row => {
+        const group = row.group_name || 'Group';
+        if (!groups[group]) groups[group] = [];
+        groups[group].push(row);
+      });
+
+     const bubbles = Object.entries(groups).map(([group, rows]) => {
+
+  const headerRow = {
+    type: 'box',
+    layout: 'baseline',
+    backgroundColor: '#111827',
+    paddingAll: '6px',
+    contents: [
+      { type: 'text', text: '#', size: 'xs', color: '#9ca3af', flex: 1 },
+      { type: 'text', text: '隊伍', size: 'xs', color: '#9ca3af', flex: 6 },
+      { type: 'text', text: '贏', size: 'xs', color: '#9ca3af', flex: 1, align: 'center' },
+      { type: 'text', text: '和', size: 'xs', color: '#9ca3af', flex: 1, align: 'center' },
+      { type: 'text', text: '負', size: 'xs', color: '#9ca3af', flex: 1, align: 'center' },
+      { type: 'text', text: '積分', size: 'xs', color: '#fbbf24', flex: 2, align: 'end', weight: 'bold' }
+    ]
+  };
+
+  const rowItems = rows.map((r, idx) => {
+    const teamName = r.team_name || r.team_short_name || 'TBD';
+
+    return {
+      type: 'box',
+      layout: 'baseline',
+      spacing: 'sm',
+      margin: 'sm',
+      paddingAll: '4px',
+      backgroundColor: idx % 2 === 0 ? '#0b1220' : '#0f172a',
+      contents: [
+        { type: 'text', text: String(r.position), size: 'xs', color: '#94a3b8', flex: 1 },
+
+        {
+          type: 'text',
+          text: getTeamNameZh(teamName),
+          size: 'sm',
+          color: '#ffffff',
+          flex: 6,
+          wrap: true,
+          weight: 'bold'
+        },
+
+        { type: 'text', text: String(r.won ?? 0), size: 'xs', color: '#22c55e', flex: 1, align: 'center' },
+        { type: 'text', text: String(r.draw ?? 0), size: 'xs', color: '#facc15', flex: 1, align: 'center' },
+        { type: 'text', text: String(r.lost ?? 0), size: 'xs', color: '#ef4444', flex: 1, align: 'center' },
+
+        {
+          type: 'text',
+          text: String(r.points ?? 0),
+          size: 'sm',
+          color: '#fbbf24',
+          flex: 2,
+          align: 'end',
+          weight: 'bold'
+        }
+      ]
+    };
+  });
+
+  return {
+    type: 'bubble',
+
+    styles: {
+      body: {
+        backgroundColor: '#0b1220'
+      }
+    },
+
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      backgroundColor: '#0f172a',
+      paddingAll: '12px',
+      contents: [
+        {
+          type: 'text',
+          text: `${group}`,
+          weight: 'bold',
+          size: 'xl',
+          color: '#ffffff'
+        },
+        {
+          type: 'text',
+          text: 'FIFA World Cup Standings',
+          size: 'xs',
+          color: '#94a3b8'
+        }
+      ]
+    },
+
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        headerRow,
+        {
+          type: 'separator',
+          margin: 'md',
+          color: '#1f2937'
+        },
+        ...rowItems
+      ]
+    }
+  };
+});
+
+      return client.replyMessage(event.replyToken, {
+        type: 'flex',
+        altText: '小組排行',
+        contents: {
+          type: 'carousel',
+          contents: bubbles
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching standings:', error);
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '❌ 無法取得小組排行，請稍後再試'
+      });
+    }
+  }
+
   // ── 賽事分析
   if (text === '賽事分析') {
   const { data, error } = await supabase.from('users')
@@ -342,10 +507,25 @@ async function handleEvent(event) {
 }
 
 // ───────────────────methods────────────────────
+async function getTodayMatches() {
+  const now = dayjs();
+  const startOfToday = now.startOf('day').format('YYYY-MM-DD HH:mm');
+  const endOfToday = now.endOf('day').format('YYYY-MM-DD HH:mm');
+
+  const { data, error } = await supabase
+    .from('matches')
+    .select('*')
+    .gte('match_date', startOfToday)
+    .lte('match_date', endOfToday)
+    .order('match_date', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
 async function getWeeklyMatches() {
   const now = dayjs();
   const startOfToday = now.startOf('day').format('YYYY-MM-DD HH:mm');
-  const endOfWeek = now.add(3, 'day').endOf('day').format('YYYY-MM-DD HH:mm');
+  const endOfWeek = now.add(7, 'day').endOf('day').format('YYYY-MM-DD HH:mm');
 
   const { data, error } = await supabase
     .from('matches')
@@ -364,6 +544,17 @@ async function getAllMatches() {
     .from('matches')
     .select('*')
     .order('match_date', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function getStandings() {
+  const { data, error } = await supabase
+    .from('standings')
+    .select('*')
+    .order('group_name', { ascending: true })
+    .order('position', { ascending: true });
 
   if (error) throw error;
   return data || [];
