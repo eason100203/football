@@ -14,7 +14,7 @@
     "dayjs": "^1.11.20",
     "dotenv": "^16.3.1",
     "express": "^5.2.1",
-    "groq-sdk": "^1.1.2"
+    "openai": "^6.39.0"
   },
   "repository": {
     "type": "git",
