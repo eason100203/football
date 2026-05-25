@@ -471,7 +471,7 @@ async function handleEvent(event) {
     const aiReply = await getMatchAnalysis(userId, text);
     
     return client.replyMessage(event.replyToken, {
-      type: 'text', text: aiReply.slice(0, 100)
+      type: 'text', text: aiReply.slice(0, 500)
     });
 
   } catch (error) {
