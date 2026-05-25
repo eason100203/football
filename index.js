@@ -610,13 +610,13 @@ async function getMatchAnalysis(userId, userText) {
       max_output_tokens: 500,
     };
 
-  
+    if (needSearch) {
       options.tools = [
         {
           type: 'web_search_preview',
         },
       ];
-    
+    }
 
     const response = await openai.responses.create(options);
 
