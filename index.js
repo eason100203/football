@@ -471,7 +471,7 @@ async function handleEvent(event) {
     const aiReply = await getMatchAnalysis(userId, text);
     
     return client.replyMessage(event.replyToken, {
-      type: 'text', text: aiReply.slice(0, 500)
+      type: 'text', text: aiReply.slice(0, 100)
     });
 
   } catch (error) {
@@ -567,9 +567,9 @@ async function getMatchAnalysis(userId, userText) {
     content: cleanUserText,
   });
 
-  // 只保留最近 6 則，省 token
+  // 只保留最近 2 則，省 token
   if (chatHistory[userId].length > 6) {
-    chatHistory[userId] = chatHistory[userId].slice(-6);
+    chatHistory[userId] = chatHistory[userId].slice(-2);
   }
 
   const needSearch = shouldUseWebSearch(cleanUserText);
@@ -579,8 +579,7 @@ async function getMatchAnalysis(userId, userText) {
 
 重要規則：
 1. 如果使用者省略主詞，預設使用者是正在詢問 2026 世界盃。
-2. 如果使用者說「第一場」、「第1場」、「開幕戰」、「首戰」，請理解為 2026 世界盃開幕戰。
-3. 不確定時，請說「目前尚未確認」，不要亂猜。
+2. 不確定時，請說「目前尚未確認」，不要亂猜。
 
 規則：
 1. 使用繁體中文，預設回答2026世界盃足球賽。
@@ -675,8 +674,6 @@ function shouldUseWebSearch(text) {
     '入選',
     '徵召',
     '大名單',
-    '2026',
-    '世界盃',
     '世足',
     '即時',
     '目前',
