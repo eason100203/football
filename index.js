@@ -200,7 +200,7 @@ async function handleEvent(event) {
   }
 
     // ── 輸贏統計
- if (text === '賽事下注記錄') {
+ if (text === '輸贏統計') {
     return client.replyMessage(event.replyToken, {
       type: 'text', text: `尚未開發 YA`
     });
