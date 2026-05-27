@@ -10,6 +10,11 @@ const app = express();
 const { getTeamNameZh } = require('./teamName.js');
 const OpenAI = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -866,16 +871,19 @@ ${matchText}
 }
 
 function getNextBroadcastTime(hour, minute) {
-  const now = new Date();
-  const next = new Date(now);
+  const now = dayjs().tz('Asia/Taipei');
 
-  next.setHours(hour, minute, 0, 0);
+  let next = now
+    .hour(hour)
+    .minute(minute)
+    .second(0)
+    .millisecond(0);
 
-  if (next <= now) {
-    next.setDate(next.getDate() + 1);
+  if (next.isBefore(now)) {
+    next = next.add(1, 'day');
   }
 
-  return next;
+  return next.toDate();
 }
 
 function scheduleDailyAnalysisBroadcast(hour, minute) {
