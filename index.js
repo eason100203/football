@@ -126,7 +126,7 @@ async function handleEvent(event) {
       .from('bets')
       .select('*, matches(home_team_name, away_team_name, label)')
       .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+      .order('seq_no', { ascending: true });
 
     if (!bets?.length) {
       return client.replyMessage(event.replyToken, {
