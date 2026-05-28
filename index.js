@@ -119,65 +119,12 @@ async function handleEvent(event) {
     });
   }
 
-  // ── 管理員專用下注 #3 阿根廷 2-50 500
-  // if (text.startsWith('下注')) {
-  //   const parts = text.split(' ');
-  //   // parts: ['下注', '#3', '阿根廷', '2-50', '500']
-  //   if (parts.length !== 5) {
-  //     return client.replyMessage(event.replyToken, {
-  //       type: 'text',
-  //       text: '格式錯誤\n正確格式：下注 #場次 隊伍 條件 金額\n範例：下注 #3 阿根廷 2-50 500'
-  //     });
-  //   }
-
-  //   const seqNo = parseInt(parts[1].replace('#', ''));
-  //   const team = parts[2];
-  //   const condition = parts[3];
-  //   const amount = parseInt(parts[4]);
-
-  //   if (isNaN(seqNo) || isNaN(amount)) {
-  //     return client.replyMessage(event.replyToken, {
-  //       type: 'text', text: '場次或金額格式錯誤'
-  //     });
-  //   }
-
-  //   // 確認場次存在且開放（使用 SeqNo 映射內部 match id）
-  //   const { data: match } = await supabase
-  //     .from('matches')
-  //     .select('*')
-  //     .eq('seq_no', seqNo)
-  //     .single();
-
-  //   if (!match) {
-  //     return client.replyMessage(event.replyToken, {
-  //       type: 'text', text: `找不到場次 #${matchId}`
-  //     });
-  //   }
-  //   if (match.status !== 'open') {
-  //     return client.replyMessage(event.replyToken, {
-  //       type: 'text', text: `場次 #${matchId} 已關閉，無法下注`
-  //     });
-  //   }
-
-  //   await supabase.from('bets').insert({
-  //     match_id: matchId,
-  //     user_id: userId,
-  //     team,
-  //     condition,
-  //     amount
-  //   });
-
-  //   return client.replyMessage(event.replyToken, {
-  //     type: 'text',
-  //     text: `✅ 下注成功\n📋 ${match.label}\n👤 ${user.nickname}\n⚽ ${team} ${condition}\n💰 ${amount}`
-  //   });
-  // }
 
   // ── 我的下注
   if (text === '我的下注紀錄') {
     const { data: bets } = await supabase
       .from('bets')
-      .select('*, matches(label)')
+      .select('*, matches(home_team_name, away_team_name, label)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -188,7 +135,7 @@ async function handleEvent(event) {
     }
 
     const msg = bets.map(b =>
-      `#${b.match_id} ${b.matches.label}\n  ${b.team} ${b.condition} $${b.amount}`
+      `#${b.match_seq_no} ${getTeamNameZh(b.matches.home_team_name)|| 'TBD'} vs ${getTeamNameZh(b.matches.away_team_name)|| 'TBD'}\n  ${b.team} ${b.condition} $${b.amount}`
     ).join('\n\n');
 
     return client.replyMessage(event.replyToken, {
