@@ -135,7 +135,7 @@ async function handleEvent(event) {
     }
 
     const msg = bets.map(b =>
-      `#${b.match_seq_no} ${getTeamNameZh(b.matches.home_team_name)|| 'TBD'} vs ${getTeamNameZh(b.matches.away_team_name)|| 'TBD'}\n  ${b.team} ${b.condition} $${b.amount}`
+      `#${b.seq_no} ${getTeamNameZh(b.matches.home_team_name)|| 'TBD'} vs ${getTeamNameZh(b.matches.away_team_name)|| 'TBD'}\n  ${b.team} ${b.condition} $${b.amount}`
     ).join('\n\n');
 
     return client.replyMessage(event.replyToken, {
