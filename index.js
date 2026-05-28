@@ -473,7 +473,43 @@ async function handleEvent(event) {
       text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計 \n• 查看會員'
     });
   }
+// ── 查看會員 admin only
+if (user.is_admin && text === '查看會員') {
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('name, nickname')
+    .order('created_at', { ascending: true });
 
+  if (error) {
+    console.error('查看會員失敗:', error);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 查看會員失敗'
+    });
+  }
+
+  if (!users?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '目前沒有會員資料'
+    });
+  }
+
+  const msg = users
+    .map(u => {
+      const nickname = u.nickname || '未設定暱稱';
+      const name = u.name || '未知名稱';
+
+      return `${nickname}（${name}）`;
+    })
+    .join('\n');
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `👥 會員列表（${users.length}人）\n\n${msg}`.slice(0, 5000)
+  });
+}
 
   // 預設回覆
   return client.replyMessage(event.replyToken, {
