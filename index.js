@@ -491,6 +491,99 @@ if (text === '取消下注') {
   });
 }
 
+if (text.startsWith('修改下注#')) {
+  if (!user.is_admin) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 只有管理員可以修改下注'
+    });
+  }
+
+  const ticketId = text.replace('修改下注#', '').trim();
+  if (!ticketId) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請提供要修改的票號，例如：修改下注#T12345'
+    });
+  }
+
+  const lines = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請輸入欲修改的下注內容，第一行為票號，後續為下注明細'
+    });
+  }
+
+  const betLines = lines.slice(1);
+
+  const { data: existingBets, error: fetchError } = await supabase
+    .from('bets')
+    .select('user_id, user_name, created_by')
+    .eq('ticket_id', ticketId)
+    .limit(1);
+
+  if (fetchError || !existingBets?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 找不到票號 ${ticketId}`
+    });
+  }
+
+  const original = existingBets[0];
+
+  const { error: deleteError } = await supabase
+    .from('bets')
+    .delete()
+    .eq('ticket_id', ticketId);
+
+  if (deleteError) {
+    console.error('刪除舊下注失敗:', deleteError);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 修改下注失敗，請稍後再試'
+    });
+  }
+
+  const parsedBets = betLines.map(row => {
+    const condition = row;
+
+    return {
+      user_id: original.user_id,
+      user_name: original.user_name,
+      created_by: original.created_by,
+      ticket_id: ticketId,
+      match_id: null,
+      seq_no: null,
+      team: null,
+      condition,
+      amount: null,
+      odds: null
+    };
+  });
+
+  const { error: insertError } = await supabase
+    .from('bets')
+    .insert(parsedBets);
+
+  if (insertError) {
+    console.error('修改下注插入失敗:', insertError);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 修改下注失敗，請稍後再試'
+    });
+  }
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `✅ 票號 ${ticketId} 的下注已更新`
+  });
+}
+
 if (text.startsWith('下注#')) {
   const lines = text
   .split('\n')
@@ -559,12 +652,14 @@ if (!seqNo || betLines.length === 0) {
     }
 
     const condition = row;
+    const ticketId = `T${Date.now()}${String(i + 1).padStart(2, '0')}${Math.floor(Math.random() * 900 + 100)}`;
 
     parsedBets.push({
       display: {
         nickname: user.nickname || '你',
         name: userName,
-        condition
+        condition,
+        ticketId
       },
       payload: {
         user_id: userId,
@@ -575,7 +670,8 @@ if (!seqNo || betLines.length === 0) {
         team: null,
         condition,
         amount: null,
-        odds: null
+        odds: null,
+        ticket_id: ticketId
       }
     });
   }
@@ -606,7 +702,7 @@ if (!seqNo || betLines.length === 0) {
   };
 
   const betText = parsedBets.map((b, index) => {
-    return `${index + 1}. ${b.display.condition}`;
+    return `${index + 1}. ${b.display.condition}\n票號：${b.display.ticketId}`;
   }).join('\n\n');
 
   return client.replyMessage(event.replyToken, {
@@ -624,7 +720,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注#<場次> <下注條件>\n  例如：下注#1 南非 2平小 500 0.83\n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注手冊\n• \n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員\n• 修改下注#<票號>\n•'
   });
 }
 //#endregion
