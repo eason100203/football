@@ -169,7 +169,8 @@ async function handleEvent(event) {
 
     const { data: bets } = await supabase
       .from('bets')
-      .select('*, matches(home_team_name, away_team_name, label)')
+      .select('user_id, user_name, ticket_id, seq_no, condition, matches(home_team_name, away_team_name, label)')
+      .order('user_name', { ascending: true })
       .order('seq_no', { ascending: true })
       .order('ticket_id', { ascending: true });
 
@@ -179,28 +180,25 @@ async function handleEvent(event) {
       });
     }
 
-    const grouped = bets.reduce((acc, b) => {
-      const key = b.seq_no;
-      acc[key] = acc[key] || {
-        seq_no: b.seq_no,
-        home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
-        away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
-        items: []
+    const summary = bets.reduce((acc, b) => {
+      const userKey = b.user_id || b.user_name || 'unknown';
+      const userLabel = b.user_name || '未知會員';
+      acc[userKey] = acc[userKey] || {
+        userLabel,
+        count: 0
       };
-      acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+      acc[userKey].count += 1;
       return acc;
     }, {});
 
-    const msg = Object.values(grouped)
-      .map(group =>
-        `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
-      )
+    const msg = Object.values(summary)
+      .map(u => `會員：${u.userLabel}\n  下注筆數：${u.count}`)
       .join('\n\n');
 
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `🎯 賽事下注記錄\n\n${msg}`
-    });
+      text: `🎯 賽事下注記錄（摘要）\n\n${msg}\n\n輸入：查詢會員 <暱稱> 查看詳細下注紀錄`}
+    );
   }
 
     // ── 輸贏統計
@@ -504,6 +502,171 @@ if (user.is_admin && text === '查看會員') {
   });
 }
 
+if (user.is_admin && text === '查詢會員') {
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, name, nickname')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('查詢會員失敗:', error);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 查詢會員失敗'
+    });
+  }
+
+  if (!users?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '目前沒有會員資料'
+    });
+  }
+
+  const msg = users
+    .map(u => {
+      const nickname = u.nickname || '未設定暱稱';
+      return `${nickname}`;
+    })
+    .join('\n');
+
+  userState[userId] = { type: 'query_member' };
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `🔎 會員暱稱列表：\n\n${msg}\n\n請直接輸入要查詢的會員暱稱`,
+  });
+}
+
+if (userState[userId]?.type === 'query_member' && user.is_admin && !text.startsWith('查詢會員')) {
+  const nickname = text.trim();
+  if (!nickname) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請輸入會員暱稱，例如：小明'
+    });
+  }
+
+  const { data: targetUser, error: userError } = await supabase
+    .from('users')
+    .select('id, name, nickname')
+    .eq('nickname', nickname)
+    .single();
+
+  if (userError || !targetUser) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 找不到暱稱：${nickname}\n請確認暱稱是否正確，或重新輸入`,
+    });
+  }
+
+  const { data: bets } = await supabase
+    .from('bets')
+    .select('*, matches(home_team_name, away_team_name, label)')
+    .eq('user_id', targetUser.id)
+    .order('seq_no', { ascending: true })
+    .order('ticket_id', { ascending: true });
+
+  delete userState[userId];
+
+  if (!bets?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ ${nickname} 目前沒有下注紀錄`
+    });
+  }
+
+  const grouped = bets.reduce((acc, b) => {
+    const key = b.seq_no;
+    acc[key] = acc[key] || {
+      seq_no: b.seq_no,
+      home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
+      away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
+      items: []
+    };
+    acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+    return acc;
+  }, {});
+
+  const msg = Object.values(grouped)
+    .map(group =>
+      `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
+    )
+    .join('\n\n');
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `🎯 ${nickname} 的下注紀錄\n\n${msg}`
+  });
+}
+
+if (text.startsWith('查詢會員 ')) {
+  if (!user.is_admin) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 只有管理員可以查詢會員下注紀錄'
+    });
+  }
+
+  const nickname = text.replace('查詢會員 ', '').trim();
+  if (!nickname) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請輸入會員暱稱，例如：查詢會員 小明'
+    });
+  }
+
+  const { data: targetUser, error: userError } = await supabase
+    .from('users')
+    .select('id, name, nickname')
+    .eq('nickname', nickname)
+    .single();
+
+  if (userError || !targetUser) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 找不到暱稱：${nickname}`
+    });
+  }
+
+  const { data: bets } = await supabase
+    .from('bets')
+    .select('*, matches(home_team_name, away_team_name, label)')
+    .eq('user_id', targetUser.id)
+    .order('seq_no', { ascending: true })
+    .order('ticket_id', { ascending: true });
+
+  if (!bets?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ ${nickname} 目前沒有下注紀錄`
+    });
+  }
+
+  const grouped = bets.reduce((acc, b) => {
+    const key = b.seq_no;
+    acc[key] = acc[key] || {
+      seq_no: b.seq_no,
+      home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
+      away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
+      items: []
+    };
+    acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+    return acc;
+  }, {});
+
+  const msg = Object.values(grouped)
+    .map(group =>
+      `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
+    )
+    .join('\n\n');
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `🎯 ${nickname} 的下注紀錄\n\n${msg}`
+  });
+}
+
 if (text === '確認下注') {
   const state = userState[userId];
 
@@ -772,7 +935,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注手冊 \n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注手冊 \n\n(管理員專用)\n• 賽事下注記錄\n• 查詢會員 <暱稱>\n• 輸贏統計\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
   });
 }
 //#endregion
