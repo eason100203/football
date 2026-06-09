@@ -135,7 +135,7 @@ async function handleEvent(event) {
     }
 
     const msg = bets.map(b =>
-      `#${b.seq_no} ${getTeamNameZh(b.matches.home_team_name)|| 'TBD'} vs ${getTeamNameZh(b.matches.away_team_name)|| 'TBD'}\n  ${b.team} ${b.condition} $${b.amount}`
+      `#${b.seq_no} ${getTeamNameZh(b.matches.home_team_name)|| 'TBD'} vs ${getTeamNameZh(b.matches.away_team_name)|| 'TBD'}\n  ${b.condition}`
     ).join('\n\n');
 
     return client.replyMessage(event.replyToken, {
@@ -411,15 +411,9 @@ async function handleEvent(event) {
 }
 
   // ════════════════════════════════
-  // 以下為管理員指令
+  // 以下為下注與管理員指令
   // ════════════════════════════════
 
-  if (!user.is_admin) {
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計 \n• 查看會員'
-    });
-  }
 // ── 查看會員 admin only
 if (user.is_admin && text === '查看會員') {
   const { data: users, error } = await supabase
@@ -458,7 +452,7 @@ if (user.is_admin && text === '查看會員') {
   });
 }
 
-if (user.is_admin && text === '確認下注') {
+if (text === '確認下注') {
   const state = userState[userId];
 
   if (!state || state.type !== 'confirm_bets') {
@@ -488,7 +482,7 @@ if (user.is_admin && text === '確認下注') {
   });
 }
 
-if (user.is_admin && text === '取消下注') {
+if (text === '取消下注') {
   delete userState[userId];
 
   return client.replyMessage(event.replyToken, {
@@ -497,7 +491,7 @@ if (user.is_admin && text === '取消下注') {
   });
 }
 
-if (user.is_admin && text.startsWith('下注#')) {
+if (text.startsWith('下注#')) {
   const lines = text
   .split('\n')
   .map(line => line.trim())
@@ -530,11 +524,11 @@ if (!seqNo || betLines.length === 0) {
     text:
       '格式錯誤\n\n' +
       '單筆格式：\n' +
-      '下注#1 禿頭 南非 2平小 500 0.83\n\n' +
+      '下注#1 墨西哥 2-50 1k 1.02\n\n' +
       '多筆格式：\n' +
       '下注#1\n' +
-      '禿頭 南非 2平小 500 0.83\n' +
-      'Jason 墨西哥 2-50 1k 1.02'
+      '3平大 500 0.83\n' +
+      '墨西哥 2-50 1k 1.02'
   });
 }
 
@@ -555,56 +549,33 @@ if (!seqNo || betLines.length === 0) {
   const parsedBets = [];
   const errors = [];
 
-  for (let i = 0; i < betLines.length; i++) {
-    const row = betLines[i];
-    const parts = row.split(/\s+/);
+  const userName = user.nickname || user.name || '未知會員';
 
-    if (parts.length !== 5) {
+  for (let i = 0; i < betLines.length; i++) {
+    const row = betLines[i].trim();
+    if (!row) {
       errors.push(`第 ${i + 2} 行格式錯誤：${row}`);
       continue;
     }
 
-    const nickname = parts[0];
-    const team = parts[1];
-    const condition = parts[2];
-    const amount = parseAmount(parts[3]);
-    const odds = Number(parts[4]);
-
-    if (!nickname || !team || !condition || isNaN(amount) || isNaN(odds)) {
-      errors.push(`第 ${i + 2} 行資料錯誤：${row}`);
-      continue;
-    }
-
-    const { data: targetUser, error: userError } = await supabase
-      .from('users')
-      .select('id, nickname, name')
-      .eq('nickname', nickname)
-      .single();
-
-    if (userError || !targetUser) {
-      errors.push(`第 ${i + 2} 行找不到會員：${nickname}`);
-      continue;
-    }
+    const condition = row;
 
     parsedBets.push({
       display: {
-        nickname: targetUser.nickname,
-        name: targetUser.name || '未知名稱',
-        team,
-        condition,
-        amount,
-        odds
+        nickname: user.nickname || '你',
+        name: userName,
+        condition
       },
       payload: {
-        user_id: targetUser.id,
-        user_name: targetUser.nickname,
+        user_id: userId,
+        user_name: userName,
         created_by: userId,
         match_id: match.id,
         seq_no: match.seq_no,
-        team,
+        team: null,
         condition,
-        amount,
-        odds
+        amount: null,
+        odds: null
       }
     });
   }
@@ -635,8 +606,7 @@ if (!seqNo || betLines.length === 0) {
   };
 
   const betText = parsedBets.map((b, index) => {
-    return `${index + 1}. ${b.display.nickname}（${b.display.name}）\n` +
-      `   ${b.display.team} ${b.display.condition} ${b.display.amount} @${b.display.odds}`;
+    return `${index + 1}. ${b.display.condition}`;
   }).join('\n\n');
 
   return client.replyMessage(event.replyToken, {
@@ -654,7 +624,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注#<場次> <下注條件>\n  例如：下注#1 南非 2平小 500 0.83\n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員'
   });
 }
 //#endregion
@@ -836,7 +806,7 @@ async function getMatchAnalysis(userId, userText) {
     },
   ];
 
-  const needSearch = shouldUseWebSearch(cleanUserText);
+  const needSearch = true; //shouldUseWebSearch(cleanUserText);
 
   try {
     const options = {
@@ -1018,7 +988,7 @@ async function generateDailyAnalysisMessage() {
 請根據 DB 賽程資料，結合 web search 最新資訊，產生 2026 世界盃每日賽事分析。
 適合 LINE 推播閱讀。
 回答控制在 1000 字內。
-重點式、有趣一點，但不要保證穩贏、不要鼓吹重押，可以推薦比分獲怎麼下比較好。
+重點式、有趣一點，但不要保證穩贏、不要鼓吹重押，可以推薦比分或怎麼下比較好。
 如果最新名單、傷兵、新聞查不到，請說「目前尚未確認」。
 不要使用markDown line看不到 例如兩個**。
         `.trim(),
