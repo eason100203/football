@@ -720,7 +720,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注手冊\n• \n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員\n• 修改下注#<票號>\n•'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注手冊\n• \n\n(管理員專用)\n• 賽事下注記錄\n• 輸贏統計\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料\n•'
   });
 }
 //#endregion
