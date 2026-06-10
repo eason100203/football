@@ -220,7 +220,7 @@ if (text === '我的下注紀錄') {
         items: []
       };
 
-      acc[key].items.push(`票號：${b.ticket_id || '無'}\n${b.condition}`);
+      acc[key].items.push(`票號：${b.ticket_id || '無'} ${b.condition}`);
 
       return acc;
     }, {});
@@ -717,7 +717,7 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
       };
 
       acc[key].items.push(
-        `票號：${b.ticket_id || '無'}\n${b.condition}`
+        `票號：${b.ticket_id || '無'} ${b.condition}`
       );
 
       return acc;
