@@ -2,7 +2,7 @@ name: Sync Matches
 
 on:
   schedule:
-    - cron: '0 */3 * * *'   # 每 3 小時執行一次
+    - cron: '0 */2 * * *'   # 每 2 小時執行一次
   workflow_dispatch:          # 允許手動觸發
 
 jobs:

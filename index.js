@@ -29,6 +29,7 @@ const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 const FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4';
 const TUTORIAL_IMAGE_URL =process.env.TUTORIAL_IMAGE_URL
 const SEARCH_MEMBER_IMAGE_URL =process.env.SEARCH_MEMBER_IMAGE_URL
+const BET_IMAGE_URL =process.env.BET_IMAGE_URL
 
 app.get('/', (req, res) => {
   console.log('Ping:', new Date().toISOString());
@@ -119,7 +120,63 @@ async function handleEvent(event) {
       type: 'text', text: `✅ 暱稱已設定為：${nickname}`
     });
   }
+ // ── 操作手冊
+  if (text === '操作手冊') {
+  
+      return client.replyMessage(event.replyToken, [{
+        type: 'text',
+        text: '⚽ 操作手冊\n\n【賽事列表】查看今日、一週內或全部賽事\n【小組排行】查看世界盃小組排行\n【賽事分析】詢問AI助手糯米有關賽事的問題\n【我的下注紀錄】查看自己的下注紀錄\n\n【下注格式】請看下圖操作'
+      },
+      {
+        type: 'image',
+        originalContentUrl: BET_IMAGE_URL,
+        previewImageUrl: BET_IMAGE_URL
+      }
+    ]);
+    
 
+    const { data: bets } = await supabase
+      .from('bets')
+      .select('user_id, user_name, ticket_id, seq_no, condition, matches(home_team_name, away_team_name, label)')
+      .order('user_name', { ascending: true })
+      .order('seq_no', { ascending: true })
+      .order('ticket_id', { ascending: true });
+
+    if (!bets?.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '目前沒有任何下注紀錄'
+      });
+    }
+
+    const summary = bets.reduce((acc, b) => {
+      const userKey = b.user_id || b.user_name || 'unknown';
+      const userLabel = b.user_name || '未知會員';
+      acc[userKey] = acc[userKey] || {
+        userLabel,
+        count: 0
+      };
+      acc[userKey].count += 1;
+      return acc;
+    }, {});
+
+    const msg = Object.values(summary)
+      .map(u => `會員：${u.userLabel}\n  下注筆數：${u.count}`)
+      .join('\n\n');
+
+    return client.replyMessage(event.replyToken, [
+      {
+      type: 'text',
+      text: `🎯 賽事下注紀錄（摘要）\n\n${msg}\n\n輸入：查看會員 <暱稱> 查看詳細下注紀錄`
+     },
+     {
+        type: 'image',
+        originalContentUrl: SEARCH_MEMBER_IMAGE_URL,
+        previewImageUrl: SEARCH_MEMBER_IMAGE_URL
+      }
+    ]);
+
+    
+  }
 
   // ── 我的下注
   if (text === '我的下注紀錄') {
@@ -152,7 +209,7 @@ async function handleEvent(event) {
           away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
           items: []
         };
-        acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+        acc[key].items.push(`票號：${b.ticket_id || '無'}\n${b.condition}\n\n`);
         return acc;
       }, {});
 
@@ -600,7 +657,7 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
         away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
         items: []
       };
-      acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+      acc[key].items.push(`票號：${b.ticket_id || '無'}\n${b.condition}\n\n`);
       return acc;
     }, {});
 
@@ -1015,7 +1072,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(下注)\n• 下注#<場次> <條件>\n• 下注#串關 <場次>\n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
   });
 }
 //#endregion
