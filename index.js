@@ -866,29 +866,66 @@ if (text.startsWith('修改下注#')) {
 
   // ── 串關：一張票只更新一筆 condition
   if (isParley) {
-    const condition = betLines.join('\n');
-
-    const { error: updateError } = await supabase
-      .from('bets')
-      .update({ condition })
-      .eq('id', existingBets[0].id);
-
-    if (updateError) {
-      console.error('修改串關下注失敗:', updateError);
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '❌ 修改串關下注失敗，請稍後再試'
-      });
-    }
-
+  if (betLines.length < 2) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text:
-        `✅ 串關票號 ${ticketId} 已更新\n\n` +
-        `${condition}`
+        `❌ 串關修改格式錯誤\n\n` +
+        `正確格式：\n` +
+        `修改下注#${ticketId}\n` +
+        `3K\n` +
+        `#1 墨西哥 2-50 1.08\n` +
+        `#1 墨西哥 3平大 0.9`
     });
   }
 
+  const amountText = betLines[0];
+
+  const parseAmount = (value) => {
+    const raw = String(value).trim().toLowerCase();
+
+    if (raw.endsWith('k')) {
+      return Number(raw.replace('k', '')) * 1000;
+    }
+
+    return Number(raw);
+  };
+
+  const amount = parseAmount(amountText);
+
+  if (!amount || Number.isNaN(amount)) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 金額格式錯誤：${amountText}\n例如：3K 或 3000`
+    });
+  }
+
+  const condition = betLines.slice(1).join('\n');
+
+  const { error: updateError } = await supabase
+    .from('bets')
+    .update({
+      amount,
+      condition
+    })
+    .eq('id', existingBets[0].id);
+
+  if (updateError) {
+    console.error('修改串關下注失敗:', updateError);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 修改串關下注失敗，請稍後再試'
+    });
+  }
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text:
+      `✅ 串關票號 ${ticketId} 已更新\n\n` +
+      `金額：${amount}\n` +
+      `${condition}`
+  });
+}
   // ── 普通下注：維持原本一行一筆
   const oldBets = existingBets;
 
