@@ -136,23 +136,56 @@ async function handleEvent(event) {
       });
     }
 
-    const grouped = bets.reduce((acc, b) => {
-      const key = b.seq_no;
-      acc[key] = acc[key] || {
-        seq_no: b.seq_no,
-        home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
-        away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
-        items: []
-      };
-      acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
-      return acc;
-    }, {});
+    // 分離普通下注和串關下注
+    const normalBets = bets.filter(b => !b.ticket_id?.startsWith('P'));
+    const parleyBets = bets.filter(b => b.ticket_id?.startsWith('P'));
 
-    const msg = Object.values(grouped)
-      .map(group =>
-        `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
-      )
-      .join('\n\n');
+    let msg = '';
+
+    // 顯示普通下注（按場次分組）
+    if (normalBets.length > 0) {
+      const grouped = normalBets.reduce((acc, b) => {
+        const key = b.seq_no;
+        acc[key] = acc[key] || {
+          seq_no: b.seq_no,
+          home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
+          away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
+          items: []
+        };
+        acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+        return acc;
+      }, {});
+
+      const normalMsg = Object.values(grouped)
+        .map(group =>
+          `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
+        )
+        .join('\n\n');
+
+      msg += `【普通下注】\n${normalMsg}`;
+    }
+
+    // 顯示串關下注（以票號分組）
+    if (parleyBets.length > 0) {
+      const parleyGrouped = parleyBets.reduce((acc, b) => {
+        const key = b.ticket_id;
+        acc[key] = acc[key] || {
+          ticketId: b.ticket_id,
+          items: []
+        };
+        acc[key].items.push(b.condition);
+        return acc;
+      }, {});
+
+      const parleyMsg = Object.values(parleyGrouped)
+        .map(group => {
+          const itemsList = group.items.map((item, idx) => `${idx + 1}. ${item}`).join('\n');
+          return `票號：${group.ticketId}\n${itemsList}`;
+        })
+        .join('\n\n');
+
+      msg += (msg ? '\n\n' : '') + `⛓️ 【串關下注】\n${parleyMsg}`;
+    }
 
     return client.replyMessage(event.replyToken, {
       type: 'text', text: `🎯 ${user.nickname || '你的'} 下注紀錄\n\n${msg}`
@@ -551,23 +584,56 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
     });
   }
 
-  const grouped = bets.reduce((acc, b) => {
-    const key = b.seq_no;
-    acc[key] = acc[key] || {
-      seq_no: b.seq_no,
-      home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
-      away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
-      items: []
-    };
-    acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
-    return acc;
-  }, {});
+  // 分離普通下注和串關下注
+  const normalBets = bets.filter(b => !b.ticket_id?.startsWith('P'));
+  const parleyBets = bets.filter(b => b.ticket_id?.startsWith('P'));
 
-  const msg = Object.values(grouped)
-    .map(group =>
-      `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
-    )
-    .join('\n\n');
+  let msg = '';
+
+  // 顯示普通下注（按場次分組）
+  if (normalBets.length > 0) {
+    const grouped = normalBets.reduce((acc, b) => {
+      const key = b.seq_no;
+      acc[key] = acc[key] || {
+        seq_no: b.seq_no,
+        home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
+        away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
+        items: []
+      };
+      acc[key].items.push(`票號：${b.ticket_id || '無'}  ${b.condition}`);
+      return acc;
+    }, {});
+
+    const normalMsg = Object.values(grouped)
+      .map(group =>
+        `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
+      )
+      .join('\n\n');
+
+    msg += `【普通下注】\n${normalMsg}`;
+  }
+
+  // 顯示串關下注（以票號分組）
+  if (parleyBets.length > 0) {
+    const parleyGrouped = parleyBets.reduce((acc, b) => {
+      const key = b.ticket_id;
+      acc[key] = acc[key] || {
+        ticketId: b.ticket_id,
+        items: []
+      };
+      acc[key].items.push(b.condition);
+      return acc;
+    }, {});
+
+    const parleyMsg = Object.values(parleyGrouped)
+      .map(group => {
+        const itemsList = group.items.map((item, idx) => `${idx + 1}. ${item}`).join('\n');
+        return `票號：${group.ticketId}\n${itemsList}`;
+      })
+      .join('\n\n');
+
+    msg += (msg ? '\n\n' : '') + `⛓️ 【串關下注】\n${parleyMsg}`;
+  }
 
   return client.replyMessage(event.replyToken, {
     type: 'text',
@@ -628,12 +694,21 @@ if (text.startsWith('修改下注#')) {
     .filter(Boolean);
 
   const firstLine = lines[0];
-  const ticketId = firstLine.replace('修改下注#', '').trim();
+  const firstParts = firstLine.split(/\s+/);
+  const ticketId = firstParts[0].replace('修改下注#', '').trim();
 
   if (!ticketId) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text: '請提供要修改的票號，例如：\n修改下注#T12345\n新條件'
+    });
+  }
+
+  // 檢查用戶是否在同一行輸入了條件（需要換行）
+  if (firstParts.length > 1) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `⚠️ 修改條件需要換行輸入！\n\n正確格式：\n修改下注#${ticketId}\n條件1\n\n例如：\n修改下注#${ticketId}\n韓國 1平 2000 0.99`
     });
   }
 
@@ -731,6 +806,74 @@ if (text.startsWith('修改下注#')) {
   });
 }
 
+// ── 串關下注（不綁場次）
+if (text.startsWith('下注#串關')) {
+  const lines = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  const betLines = lines.slice(1);
+
+  if (betLines.length === 0) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text:
+        '格式錯誤\n\n' +
+        '串關格式：\n' +
+        '下注#串關\n' +
+        '2k \n'+
+        '#1 墨西哥 2-50 1.08\n' +
+        '#1 墨西哥 3平大 0.9\n' +
+        '#6 巴西 1-50 0.85'
+    });
+  }
+
+  const userName = user.nickname || user.name || '未知會員';
+  const ticketId = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
+
+  const parsedBets = betLines.map(row => ({
+    display: {
+      condition: row,
+      ticketId
+    },
+    payload: {
+      user_id: userId,
+      user_name: userName,
+      created_by: userId,
+
+      // 串關不綁場次
+      match_id: null,
+      seq_no: null,
+
+      team: null,
+      condition: row,
+      amount: null,
+      odds: null,
+      ticket_id: ticketId
+    }
+  }));
+
+  userState[userId] = {
+    type: 'confirm_bets',
+    payload: parsedBets.map(b => b.payload)
+  };
+
+  const betText = parsedBets
+    .map((b, index) => `${index + 1}. ${b.display.condition}`)
+    .join('\n');
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text:
+      '⛓️ 請確認串關下注資料：\n\n' +
+      `票號：${ticketId}\n\n` +
+      betText +
+      '\n\n✅確認請輸入：確認下注\n' +
+      '❌取消請輸入：取消下注'
+  });
+}
+
 if (text.startsWith('下注#')) {
   const lines = text
   .split('\n')
@@ -768,7 +911,12 @@ if (!seqNo || betLines.length === 0) {
       '多筆格式：\n' +
       '下注#1\n' +
       '3平大 500 0.83\n' +
-      '墨西哥 2-50 1k 1.02'
+      '墨西哥 2-50 1k 1.02\n\n'+
+      '下注#串關\n' +
+      '2k \n'+
+      '#1 墨西哥 2-50 1.08\n' +
+      '#1 墨西哥 3平大 0.9\n' +
+      '#6 巴西 1-50 0.85'
   });
 }
 
@@ -867,7 +1015,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(下注)\n• 下注#<場次> <條件>\n• 下注#串關 <場次>\n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
   });
 }
 //#endregion
