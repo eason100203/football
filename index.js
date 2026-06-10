@@ -828,20 +828,21 @@ if (text.startsWith('修改下注#')) {
     });
   }
 
-  // 檢查用戶是否在同一行輸入了條件（需要換行）
   if (firstParts.length > 1) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `⚠️ 修改條件需要換行輸入！\n\n正確格式：\n修改下注#${ticketId}\n條件1\n\n例如：\n修改下注#${ticketId}\n韓國 1平 2000 0.99`
+      text:
+        `⚠️ 修改條件需要換行輸入！\n\n` +
+        `正確格式：\n修改下注#${ticketId}\n條件\n\n` +
+        `例如：\n修改下注#${ticketId}\n韓國 1平 2000 0.99`
     });
   }
 
-  // 先查詢票號是否存在
   const { data: existingBets, error: fetchError } = await supabase
     .from('bets')
-    .select('user_id, user_name, created_by,condition')
+    .select('id, user_id, user_name, created_by, condition, amount, ticket_id')
     .eq('ticket_id', ticketId)
-    .limit(1);
+    .order('id', { ascending: true });
 
   if (fetchError || !existingBets?.length) {
     return client.replyMessage(event.replyToken, {
@@ -850,45 +851,61 @@ if (text.startsWith('修改下注#')) {
     });
   }
 
-  // 檢查是否有修改內容
   if (lines.length < 2) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `✓ 票號 ${ticketId} 存在\n\n請輸入修改後的下注內容：\n修改下注#${ticketId}\n條件`
+      text:
+        `✓ 票號 ${ticketId} 存在\n\n` +
+        `請輸入修改後的下注內容：\n` +
+        `修改下注#${ticketId}\n條件`
     });
   }
 
   const betLines = lines.slice(1);
-  
-  // 獲取該ticket_id的所有舊記錄
-  const { data: oldBets, error: oldBetsError } = await supabase
-    .from('bets')
-    .select('id, condition')
-    .eq('ticket_id', ticketId)
-    .order('id', { ascending: true });
+  const isParley = ticketId.startsWith('P');
 
-  if (oldBetsError) {
-    console.error('查詢舊下注失敗:', oldBetsError);
+  // ── 串關：一張票只更新一筆 condition
+  if (isParley) {
+    const condition = betLines.join('\n');
+
+    const { error: updateError } = await supabase
+      .from('bets')
+      .update({ condition })
+      .eq('id', existingBets[0].id);
+
+    if (updateError) {
+      console.error('修改串關下注失敗:', updateError);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '❌ 修改串關下注失敗，請稍後再試'
+      });
+    }
+
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '❌ 修改下注失敗，請稍後再試'
+      text:
+        `✅ 串關票號 ${ticketId} 已更新\n\n` +
+        `${condition}`
     });
   }
 
-  // 更新舊記錄的condition
+  // ── 普通下注：維持原本一行一筆
+  const oldBets = existingBets;
+
   let updateCount = 0;
+
   for (let i = 0; i < Math.min(oldBets.length, betLines.length); i++) {
     const { error } = await supabase
       .from('bets')
       .update({ condition: betLines[i] })
       .eq('id', oldBets[i].id);
-    
+
     if (!error) updateCount++;
   }
 
-  // 如果新條件數少於舊記錄數，刪除多餘的
   if (betLines.length < oldBets.length) {
     const idsToDelete = oldBets.slice(betLines.length).map(b => b.id);
+
     for (const id of idsToDelete) {
       await supabase
         .from('bets')
@@ -897,14 +914,20 @@ if (text.startsWith('修改下注#')) {
     }
   }
 
-  // 如果新條件數多於舊記錄數，插入新記錄
   if (betLines.length > oldBets.length) {
-    const { data: sample } = await supabase
+    const { data: sample, error: sampleError } = await supabase
       .from('bets')
       .select('user_id, user_name, created_by, match_id, seq_no, team, amount, odds')
       .eq('ticket_id', ticketId)
       .limit(1)
       .single();
+
+    if (sampleError || !sample) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '❌ 找不到原下注資料，無法新增修改內容'
+      });
+    }
 
     const newBets = betLines.slice(oldBets.length).map(row => ({
       user_id: sample.user_id,
@@ -919,9 +942,17 @@ if (text.startsWith('修改下注#')) {
       odds: sample.odds
     }));
 
-    await supabase
+    const { error: insertError } = await supabase
       .from('bets')
       .insert(newBets);
+
+    if (insertError) {
+      console.error('新增修改下注失敗:', insertError);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '❌ 新增修改下注失敗'
+      });
+    }
   }
 
   return client.replyMessage(event.replyToken, {
