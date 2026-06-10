@@ -178,135 +178,184 @@ async function handleEvent(event) {
     
   }
 
-  // ── 我的下注
-  if (text === '我的下注紀錄') {
-    const { data: bets } = await supabase
-      .from('bets')
-      .select('*, matches(home_team_name, away_team_name, label)')
-      .eq('user_id', userId)
-      .order('seq_no', { ascending: true })
-      .order('ticket_id', { ascending: true });
+ // ── 我的下注
+if (text === '我的下注紀錄') {
+  const { data: bets, error } = await supabase
+    .from('bets')
+    .select('*, matches(home_team_name, away_team_name, label)')
+    .eq('user_id', userId)
+    .order('seq_no', { ascending: true })
+    .order('ticket_id', { ascending: true });
 
-    if (!bets?.length) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text', text: '你還沒有任何下注紀錄'
-      });
-    }
-
-    // 分離普通下注和串關下注
-    const normalBets = bets.filter(b => !b.ticket_id?.startsWith('P'));
-    const parleyBets = bets.filter(b => b.ticket_id?.startsWith('P'));
-
-    let msg = '';
-
-    // 顯示普通下注（按場次分組）
-    if (normalBets.length > 0) {
-      const grouped = normalBets.reduce((acc, b) => {
-        const key = b.seq_no;
-        acc[key] = acc[key] || {
-          seq_no: b.seq_no,
-          home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
-          away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
-          items: []
-        };
-        acc[key].items.push(`票號：${b.ticket_id || '無'} ${b.condition}`);
-        return acc;
-      }, {});
-
-      const normalMsg = Object.values(grouped)
-        .map(group =>
-          `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
-        )
-        .join('\n\n');
-
-      msg += `【普通下注】\n${normalMsg}`;
-    }
-
-    // 顯示串關下注（以票號分組）
-    if (parleyBets.length > 0) {
-      const parleyGrouped = parleyBets.reduce((acc, b) => {
-        const key = b.ticket_id;
-        acc[key] = acc[key] || {
-          ticketId: b.ticket_id,
-          items: []
-        };
-        acc[key].items.push(b.condition);
-        return acc;
-      }, {});
-
-      const parleyMsg = Object.values(parleyGrouped)
-        .map(group => {
-          const itemsList = group.items.map((item, idx) => `${item}`).join('\n');
-          return `票號：${group.ticketId}\n${itemsList}`;
-        })
-        .join('\n\n');
-
-      msg += (msg ? '\n\n' : '') + `⛓️ 【串關下注】\n${parleyMsg}`;
-    }
-
+  if (error) {
+    console.error('查詢我的下注失敗:', error);
     return client.replyMessage(event.replyToken, {
-      type: 'text', text: `🎯 ${user.nickname || '你的'} 下注紀錄\n\n${msg}`
+      type: 'text',
+      text: '❌ 查詢下注紀錄失敗'
     });
   }
 
-  // ── 賽事下注紀錄
-  if (text === '賽事下注紀錄') {
-    if (!user.is_admin) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '❌ 只有管理員可以查看賽事下注紀錄'
-      });
-    }
+  if (!bets?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '你還沒有任何下注紀錄'
+    });
+  }
 
-    const { data: bets } = await supabase
-      .from('bets')
-      .select('user_id, user_name, ticket_id, seq_no, condition, matches(home_team_name, away_team_name, label)')
-      .order('user_name', { ascending: true })
-      .order('seq_no', { ascending: true })
-      .order('ticket_id', { ascending: true });
+  // 分離普通下注和串關下注
+  const normalBets = bets.filter(b => !b.ticket_id?.startsWith('P'));
+  const parleyBets = bets.filter(b => b.ticket_id?.startsWith('P'));
 
-    if (!bets?.length) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text', text: '目前沒有任何下注紀錄'
-      });
-    }
+  let msg = '';
 
-    const summary = bets.reduce((acc, b) => {
-      const userKey = b.user_id || b.user_name || 'unknown';
-      const userLabel = b.user_name || '未知會員';
-      acc[userKey] = acc[userKey] || {
-        userLabel,
-        count: 0
+  // 顯示普通下注（按場次分組）
+  if (normalBets.length > 0) {
+    const grouped = normalBets.reduce((acc, b) => {
+      const key = b.seq_no;
+
+      acc[key] = acc[key] || {
+        seq_no: b.seq_no,
+        home: getTeamNameZh(b.matches?.home_team_name) || 'TBD',
+        away: getTeamNameZh(b.matches?.away_team_name) || 'TBD',
+        items: []
       };
-      acc[userKey].count += 1;
+
+      acc[key].items.push(`票號：${b.ticket_id || '無'}\n${b.condition}`);
+
       return acc;
     }, {});
 
-    const msg = Object.values(summary)
-      .map(u => `會員：${u.userLabel}\n  下注筆數：${u.count}`)
+    const normalMsg = Object.values(grouped)
+      .map(group =>
+        `場次：#${group.seq_no} ${group.home} vs ${group.away}\n  ${group.items.join('\n  ')}`
+      )
       .join('\n\n');
 
-    return client.replyMessage(event.replyToken, [
-      {
-      type: 'text',
-      text: `🎯 賽事下注紀錄（摘要）\n\n${msg}\n\n輸入：查看會員 <暱稱> 查看詳細下注紀錄`
-     },
-     {
-        type: 'image',
-        originalContentUrl: SEARCH_MEMBER_IMAGE_URL,
-        previewImageUrl: SEARCH_MEMBER_IMAGE_URL
-      }
-    ]);
-
-    
+    msg += `【普通下注】\n${normalMsg}`;
   }
 
-    // ── 輸贏統計
- if (text === '輸贏統計') {
+  // 顯示串關下注（一張票一筆 condition）
+  if (parleyBets.length > 0) {
+    const parleyGrouped = parleyBets.reduce((acc, b) => {
+      const key = b.ticket_id;
+
+      if (!acc[key]) {
+        acc[key] = {
+          ticketId: b.ticket_id,
+          amount: b.amount,
+          condition: b.condition
+        };
+      }
+
+      return acc;
+    }, {});
+
+    const parleyMsg = Object.values(parleyGrouped)
+      .map(group =>
+        `票號：${group.ticketId}\n` +
+        `金額：${group.amount || 0}\n` +
+        `${group.condition}`
+      )
+      .join('\n\n');
+
+    msg += (msg ? '\n\n' : '') + `⛓️ 【串關下注】\n${parleyMsg}`;
+  }
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `🎯 ${user.nickname || '你的'} 下注紀錄\n\n${msg}`
+  });
+}
+
+ // ── 賽事下注紀錄
+if (text === '賽事下注紀錄') {
+  if (!user.is_admin) {
     return client.replyMessage(event.replyToken, {
-      type: 'text', text: `尚未開發 YA`
+      type: 'text',
+      text: '❌ 只有管理員可以查看賽事下注紀錄'
     });
   }
+
+  const { data: bets, error } = await supabase
+    .from('bets')
+    .select(`
+      user_id,
+      user_name,
+      ticket_id,
+      seq_no,
+      condition,
+      matches(home_team_name, away_team_name, label)
+    `)
+    .order('user_name', { ascending: true })
+    .order('seq_no', { ascending: true })
+    .order('ticket_id', { ascending: true });
+
+  if (error) {
+    console.error(error);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 查詢下注紀錄失敗'
+    });
+  }
+
+  if (!bets?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '目前沒有任何下注紀錄'
+    });
+  }
+
+  const summary = bets.reduce((acc, b) => {
+    const userKey = b.user_id || b.user_name || 'unknown';
+    const userLabel = b.user_name || '未知會員';
+
+    if (!acc[userKey]) {
+      acc[userKey] = {
+        userLabel,
+        normalCount: 0,
+        parleyCount: 0
+      };
+    }
+
+    // P開頭視為串關
+    if (b.ticket_id?.startsWith('P')) {
+      acc[userKey].parleyCount += 1;
+    } else {
+      acc[userKey].normalCount += 1;
+    }
+
+    return acc;
+  }, {});
+
+  const msg = Object.values(summary)
+    .map(u => {
+      const total = u.normalCount + u.parleyCount;
+
+      return (
+        `會員：${u.userLabel}\n` +
+        `普通下注：${u.normalCount}筆\n` +
+        `串關：${u.parleyCount}張\n` +
+        `總計：${total}張`
+      );
+    })
+    .join('\n\n');
+
+  return client.replyMessage(event.replyToken, [
+    {
+      type: 'text',
+      text:
+        `🎯 賽事下注紀錄（摘要）\n\n${msg}\n\n` +
+        '輸入：查看會員 <暱稱>\n' +
+        '查看該會員詳細下注紀錄'
+    },
+    {
+      type: 'image',
+      originalContentUrl: SEARCH_MEMBER_IMAGE_URL,
+      previewImageUrl: SEARCH_MEMBER_IMAGE_URL
+    }
+  ]);
+}
 
   // ── 賽事列表
   if (text === '賽事列表') {
@@ -608,7 +657,7 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
   if (!nickname) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '請輸入會員暱稱，例如：小明'
+      text: '請輸入會員暱稱，例如：查看會員 小明'
     });
   }
 
@@ -625,12 +674,20 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
     });
   }
 
-  const { data: bets } = await supabase
+  const { data: bets, error: betsError } = await supabase
     .from('bets')
     .select('*, matches(home_team_name, away_team_name, label)')
     .eq('user_id', targetUser.id)
     .order('seq_no', { ascending: true })
     .order('ticket_id', { ascending: true });
+
+  if (betsError) {
+    console.error('查詢下注紀錄失敗:', betsError);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 查詢下注紀錄失敗'
+    });
+  }
 
   delete userState[userId];
 
@@ -651,13 +708,18 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
   if (normalBets.length > 0) {
     const grouped = normalBets.reduce((acc, b) => {
       const key = b.seq_no;
+
       acc[key] = acc[key] || {
         seq_no: b.seq_no,
-        home: getTeamNameZh(b.matches.home_team_name) || 'TBD',
-        away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
+        home: getTeamNameZh(b.matches?.home_team_name) || 'TBD',
+        away: getTeamNameZh(b.matches?.away_team_name) || 'TBD',
         items: []
       };
-      acc[key].items.push(`票號：${b.ticket_id || '無'} ${b.condition}`);
+
+      acc[key].items.push(
+        `票號：${b.ticket_id || '無'}\n${b.condition}`
+      );
+
       return acc;
     }, {});
 
@@ -670,23 +732,28 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
     msg += `【普通下注】\n${normalMsg}`;
   }
 
-  // 顯示串關下注（以票號分組）
+  // 顯示串關下注（一張票一筆 condition）
   if (parleyBets.length > 0) {
     const parleyGrouped = parleyBets.reduce((acc, b) => {
       const key = b.ticket_id;
-      acc[key] = acc[key] || {
-        ticketId: b.ticket_id,
-        items: []
-      };
-      acc[key].items.push(b.condition);
+
+      if (!acc[key]) {
+        acc[key] = {
+          ticketId: b.ticket_id,
+          amount: b.amount,
+          condition: b.condition
+        };
+      }
+
       return acc;
     }, {});
 
     const parleyMsg = Object.values(parleyGrouped)
-      .map(group => {
-        const itemsList = group.items.map((item, idx) => `${idx + 1}. ${item}`).join('\n');
-        return `票號：${group.ticketId}\n${itemsList}`;
-      })
+      .map(group =>
+        `票號：${group.ticketId}\n` +
+        `金額：${group.amount || 0}\n` +
+        `${group.condition}`
+      )
       .join('\n\n');
 
     msg += (msg ? '\n\n' : '') + `⛓️ 【串關下注】\n${parleyMsg}`;
@@ -863,7 +930,7 @@ if (text.startsWith('修改下注#')) {
   });
 }
 
-// ── 串關下注（不綁場次）
+// ── 串關下注（不綁場次，一張票只存一筆）
 if (text.startsWith('下注#串關')) {
   const lines = text
     .split('\n')
@@ -872,14 +939,14 @@ if (text.startsWith('下注#串關')) {
 
   const betLines = lines.slice(1);
 
-  if (betLines.length === 0) {
+  if (betLines.length < 2) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text:
         '格式錯誤\n\n' +
         '串關格式：\n' +
         '下注#串關\n' +
-        '2k \n'+
+        '2k\n' +
         '#1 墨西哥 2-50 1.08\n' +
         '#1 墨西哥 3平大 0.9\n' +
         '#6 巴西 1-50 0.85'
@@ -887,45 +954,66 @@ if (text.startsWith('下注#串關')) {
   }
 
   const userName = user.nickname || user.name || '未知會員';
-  const ticketId = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
-  const parsedBets = betLines.map(row => ({
-    display: {
-      condition: row,
-      ticketId
-    },
-    payload: {
-      user_id: userId,
-      user_name: userName,
-      created_by: userId,
+  const ticketId =
+    'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
-      // 串關不綁場次
-      match_id: null,
-      seq_no: null,
+  // 第一行是金額
+  const amountText = betLines[0];
 
-      team: null,
-      condition: row,
-      amount: null,
-      odds: null,
-      ticket_id: ticketId
+  const parseAmount = (value) => {
+    const raw = String(value).trim().toLowerCase();
+
+    if (raw.endsWith('k')) {
+      return Number(raw.replace('k', '')) * 1000;
     }
-  }));
+
+    return Number(raw);
+  };
+
+  const amount = parseAmount(amountText);
+
+  if (!amount || Number.isNaN(amount)) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 金額格式錯誤：${amountText}\n例如：2k 或 2000`
+    });
+  }
+
+  // 第二行開始都是串關內容
+  const conditionLines = betLines.slice(1);
+
+  // DB 存一個 condition，多行字串
+  const condition = conditionLines.join('\n');
+
+  const payload = {
+    user_id: userId,
+    user_name: userName,
+    created_by: userId,
+
+    // 串關不綁場次
+    match_id: null,
+    seq_no: null,
+
+    team: null,
+    condition,
+    amount,
+    odds: null,
+    ticket_id: ticketId
+  };
 
   userState[userId] = {
     type: 'confirm_bets',
-    payload: parsedBets.map(b => b.payload)
+    payload: [payload]
   };
-
-  const betText = parsedBets
-    .map((b, index) => `${b.display.condition}`)
-    .join('\n');
 
   return client.replyMessage(event.replyToken, {
     type: 'text',
     text:
       '⛓️ 請確認串關下注資料：\n\n' +
-      `票號：${ticketId}\n\n` +
-      betText +
+      `票號：${ticketId}\n` +
+      `金額：${amount}\n\n` +
+      condition +
       '\n\n✅確認請輸入：確認下注\n' +
       '❌取消請輸入：取消下注'
   });
