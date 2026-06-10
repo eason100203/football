@@ -209,7 +209,7 @@ async function handleEvent(event) {
           away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
           items: []
         };
-        acc[key].items.push(`票號：${b.ticket_id || '無'}\n${b.condition}\n\n`);
+        acc[key].items.push(`票號：${b.ticket_id || '無'} ${b.condition}`);
         return acc;
       }, {});
 
@@ -236,7 +236,7 @@ async function handleEvent(event) {
 
       const parleyMsg = Object.values(parleyGrouped)
         .map(group => {
-          const itemsList = group.items.map((item, idx) => `${idx + 1}. ${item}`).join('\n');
+          const itemsList = group.items.map((item, idx) => `${item}`).join('\n');
           return `票號：${group.ticketId}\n${itemsList}`;
         })
         .join('\n\n');
@@ -657,7 +657,7 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
         away: getTeamNameZh(b.matches.away_team_name) || 'TBD',
         items: []
       };
-      acc[key].items.push(`票號：${b.ticket_id || '無'}\n${b.condition}\n\n`);
+      acc[key].items.push(`票號：${b.ticket_id || '無'} ${b.condition}`);
       return acc;
     }, {});
 
@@ -917,7 +917,7 @@ if (text.startsWith('下注#串關')) {
   };
 
   const betText = parsedBets
-    .map((b, index) => `${index + 1}. ${b.display.condition}`)
+    .map((b, index) => `${b.display.condition}`)
     .join('\n');
 
   return client.replyMessage(event.replyToken, {
