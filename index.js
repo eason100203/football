@@ -28,6 +28,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const FOOTBALL_DATA_API_KEY = process.env.FOOTBALL_DATA_API_KEY;
 const FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4';
 const TUTORIAL_IMAGE_URL =process.env.TUTORIAL_IMAGE_URL
+const SEARCH_MEMBER_IMAGE_URL =process.env.SEARCH_MEMBER_IMAGE_URL
 
 app.get('/', (req, res) => {
   console.log('Ping:', new Date().toISOString());
@@ -158,12 +159,12 @@ async function handleEvent(event) {
     });
   }
 
-  // ── 賽事下注記錄
-  if (text === '賽事下注記錄') {
+  // ── 賽事下注紀錄
+  if (text === '賽事下注紀錄') {
     if (!user.is_admin) {
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: '❌ 只有管理員可以查看賽事下注記錄'
+        text: '❌ 只有管理員可以查看賽事下注紀錄'
       });
     }
 
@@ -195,10 +196,19 @@ async function handleEvent(event) {
       .map(u => `會員：${u.userLabel}\n  下注筆數：${u.count}`)
       .join('\n\n');
 
-    return client.replyMessage(event.replyToken, {
+    return client.replyMessage(event.replyToken, [
+      {
       type: 'text',
-      text: `🎯 賽事下注記錄（摘要）\n\n${msg}\n\n輸入：查看會員 <暱稱> 查看詳細下注紀錄`}
-    );
+      text: `🎯 賽事下注紀錄（摘要）\n\n${msg}\n\n輸入：查看會員 <暱稱> 查看詳細下注紀錄`
+     },
+     {
+        type: 'image',
+        originalContentUrl: SEARCH_MEMBER_IMAGE_URL,
+        previewImageUrl: SEARCH_MEMBER_IMAGE_URL
+      }
+    ]);
+
+    
   }
 
     // ── 輸贏統計
@@ -490,10 +500,16 @@ if (user.is_admin && text === '查看會員') {
     .map(u => `${u.nickname}(${u.name})` || '未設定暱稱')
     .join('\n');
 
-  return client.replyMessage(event.replyToken, {
+  return client.replyMessage(event.replyToken, [{
     type: 'text',
-    text: `🔎 會員列表：\n\n${msg}\n\n請輸入要查看的會員暱稱查詢下注紀錄`,
-  });
+    text: `🔎 會員列表：\n\n${msg}\n\n輸入：查看會員 <暱稱> 查看詳細下注紀錄`,
+  },   
+  {
+    type: 'image',
+    originalContentUrl: SEARCH_MEMBER_IMAGE_URL,
+    previewImageUrl: SEARCH_MEMBER_IMAGE_URL
+  }
+]);
 }
 
 if (user.is_admin && text.startsWith('查看會員 ')) {
@@ -851,7 +867,7 @@ if (!seqNo || betLines.length === 0) {
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 下注手冊 \n\n(管理員專用)\n• 賽事下注記錄\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 匯出資料'
   });
 }
 //#endregion
@@ -922,7 +938,7 @@ const SYSTEM_PROMPT = `
 2. 回答賽程、開幕戰、誰對誰、時間、分組時，優先使用提供的 DB 賽程資料。
 3. 如果 DB 資料沒有，才說「目前尚未確認」，不要亂猜。
 4. 禁止使用 Markdown，不要加粗、斜體等，LINE 可能會顯示異常。
-
+5. 如果要貼新聞連結最多2則
 規則：
 1. 使用繁體中文。
 2. 回答控制在 500 字內。
@@ -1218,6 +1234,7 @@ async function generateDailyAnalysisMessage() {
 重點式、有趣一點，但不要保證穩贏、不要鼓吹重押，可以推薦比分或怎麼下比較好。
 如果最新名單、傷兵、新聞查不到，請說「目前尚未確認」。
 不要使用markDown line看不到 例如兩個**。
+如果要引用新聞連結最多2則。
         `.trim(),
       },
       {
@@ -1299,7 +1316,7 @@ async function setupRichMenu() {
         { bounds: { x: 1666, y: 0,   width: 834, height: 843 }, action: { type: 'message', text: '小組排行' } },
         { bounds: { x: 0,    y: 843, width: 833, height: 843 }, action: { type: 'message', text: '我的下注紀錄' } },
         { bounds: { x: 833,  y: 843, width: 833, height: 843 }, action: { type: 'message', text: '賽事下注紀錄' } },
-        { bounds: { x: 1666, y: 843, width: 834, height: 843 }, action: { type: 'message', text: '輸贏統計' } },
+        { bounds: { x: 1666, y: 843, width: 834, height: 843 }, action: { type: 'message', text: '操作手冊' } },
       ]
     };
 
