@@ -1435,7 +1435,7 @@ async function getMatchAnalysis(userId, userText) {
 
   try {
     const response = await openai.responses.create({
-      model: 'gpt-4.1',
+      model: 'gpt-4.1-mini',
       temperature: 0.3,
       input,
       max_output_tokens: 600,
