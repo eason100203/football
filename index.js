@@ -1435,15 +1435,15 @@ async function getMatchAnalysis(userId, userText) {
 
   try {
     const response = await openai.responses.create({
-      model: 'gpt-5-nano',
+      model: 'gpt-5-mini',
       input,
       max_output_tokens: 600,
 
-      // tools: [
-      //   {
-      //     type: 'web_search_preview',
-      //   },
-      // ],
+      tools: [
+        {
+          type: 'web_search_preview',
+        },
+      ],
     });
 
     const reply =
