@@ -48,36 +48,85 @@ let chatHistory = {};
 let userState = {}; // 記錄用戶狀態
 //#region 主程式
 async function handleEvent(event) {
-  const userId = event.source.userId;
-  if (!userId) return;
+ const userId = event.source.userId;
+if (!userId) return;
 
-  if (event.type === 'follow') {
-    await ensureUser(userId);
-    const user = await getUser(userId);
+const isGroup =
+  event.source.type === 'group' ||
+  event.source.type === 'room';
 
-    if (!user.nickname) {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '👋 歡迎加入！\n請先設定你的暱稱：\n\n設定暱稱 你的暱稱'
-      });
-    }
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '⚽ 歡迎回歸戰場！'
-    });
-  }
-
-  if (event.type !== 'message') return;
-
-  const text = event.message.text?.trim();
-  if (!text) return;
-
+if (event.type === 'follow') {
   await ensureUser(userId);
   const user = await getUser(userId);
 
+  if (!user.nickname) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '👋 歡迎加入！\n請先設定你的暱稱：\n\n設定暱稱 你的暱稱'
+    });
+  }
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '⚽ 歡迎回歸戰場！'
+  });
+}
+
+if (event.type !== 'message') return;
+
+const text = event.message.text?.trim();
+if (!text) return;
+
+// 群組只接受這三個 @ 指令
+if (isGroup) {
+  if (
+    text !== '@賽事列表' &&
+    text !== '@小組排行' &&
+    !text.startsWith('@賽事分析')
+  ) {
+    return;
+  }
+}
+
+// 私訊才建立/讀取會員
+if (!isGroup) {
+  await ensureUser(userId);
+}
+
+const user = !isGroup
+  ? await getUser(userId)
+  : null;
+  
+
+if (isGroup && text.startsWith('@賽事分析')) {
+  const question = text.replace('@賽事分析', '').trim();
+
+  if (!question) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請輸入問題，例如：\n@賽事分析 巴西會奪冠嗎'
+    });
+  }
+
+  try {
+    const aiReply = await getMatchAnalysis(userId, question);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: aiReply.slice(0, 500)
+    });
+  } catch (error) {
+    console.error('群組 AI 錯誤:', error.message);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ AI 助手暫時無法使用，請稍後再試'
+    });
+  }
+}
+
   // 新用戶還沒設定暱稱，強制引導
- if (!user.nickname && !text.startsWith('設定暱稱')) {
+ if (!isGroup && !user.nickname && !text.startsWith('設定暱稱')) {
   try {
     await client.replyMessage(event.replyToken, [
        {
@@ -97,7 +146,7 @@ async function handleEvent(event) {
 }
 
   // ── 設定暱稱
-  if (text.startsWith('設定暱稱')) {
+  if (!isGroup && text.startsWith('設定暱稱')) {
     const nickname = text.replace('設定暱稱', '').trim();
     if (!nickname) {
       return client.replyMessage(event.replyToken, {
@@ -120,8 +169,9 @@ async function handleEvent(event) {
       type: 'text', text: `✅ 暱稱已設定為：${nickname}`
     });
   }
+  
  // ── 操作手冊
-  if (text === '操作手冊') {
+  if (!isGroup && text === '操作手冊') {
   
       return client.replyMessage(event.replyToken, [{
         type: 'text',
@@ -179,7 +229,7 @@ async function handleEvent(event) {
   }
 
  // ── 我的下注
-if (text === '我的下注紀錄') {
+if (!isGroup && text === '我的下注紀錄') {
   const { data: bets, error } = await supabase
     .from('bets')
     .select('*, matches(home_team_name, away_team_name, label)')
@@ -268,7 +318,7 @@ if (text === '我的下注紀錄') {
 }
 
  // ── 賽事下注紀錄
-if (text === '賽事下注紀錄') {
+if (!isGroup && text === '賽事下注紀錄') {
   if (!user.is_admin) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
@@ -358,13 +408,46 @@ if (text === '賽事下注紀錄') {
 }
 
   // ── 賽事列表
-  if (text === '賽事列表') {
+  if (!isGroup && text === '賽事列表') {
     userState[userId] = 'waiting_for_category';
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text: '⚽ 請選擇賽事分類：\n\n1️⃣ 今日世足賽事\n2️⃣ 一週內世足賽事\n3️⃣ 全部世足賽事\n\n請輸入 1、2 或 3'
     });
   }
+
+  // ── 賽事列表群組
+  if (isGroup && text === '@賽事列表') {
+  try {
+    const matches = await getWeeklyMatches();
+
+    if (!matches?.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '⚽ 未來 7 天目前沒有賽事'
+      });
+    }
+
+    const msg = matches
+  .map(
+    m =>
+      `#${m.seq_no}｜${m.match_date}\n${getTeamNameZh(m.home_team_name)} vs ${getTeamNameZh(m.away_team_name)}`
+  )
+  .join('\n\n');
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `⚽ 未來 7 天賽事\n\n${msg}`.slice(0, 5000)
+    });
+  } catch (error) {
+    console.error('群組賽事列表錯誤:', error);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 無法取得賽事資料，請稍後再試'
+    });
+  }
+}
 
   // ── 處理賽事列表分類選擇
   if (userState[userId] === 'waiting_for_category') {
@@ -415,7 +498,7 @@ if (text === '賽事下注紀錄') {
   }
 
   // ── 小組排行
-  if (text === '小組排行') {
+  if ((!isGroup && text === '小組排行') || (isGroup && text === '@小組排行')) {
     delete userState[userId];
     try {
       const standings = await getStandings();
@@ -555,7 +638,7 @@ if (text === '賽事下注紀錄') {
   }
 
   // ── 賽事分析
-  if (text === '賽事分析') {
+  if (!isGroup && text === '賽事分析') {
   const { data, error } = await supabase.from('users')
     .update({ mode: 'ai' })
     .eq('id', userId);
@@ -570,7 +653,7 @@ if (text === '賽事下注紀錄') {
   });
   }
 
-  if (text === '離開') {
+  if (!isGroup && text === '離開') {
     if (user.mode === 'ai') {
       delete chatHistory[userId]; 
    await supabase.from('users')
@@ -589,7 +672,7 @@ if (text === '賽事下注紀錄') {
     }
 }
 
- if (user.mode === 'ai') {
+ if (!isGroup && user.mode === 'ai') {
   // 1. 先判斷使用者是否在找「賽程」或「時間」
   const lowercaseText = text.toLowerCase();
 
@@ -614,7 +697,7 @@ if (text === '賽事下注紀錄') {
   // ════════════════════════════════
 
 // ── 查看會員 admin only
-if (user.is_admin && text === '查看會員') {
+if (!isGroup && user.is_admin && text === '查看會員') {
   const { data: users, error } = await supabase
     .from('users')
     .select('id, name, nickname')
@@ -651,7 +734,7 @@ if (user.is_admin && text === '查看會員') {
 ]);
 }
 
-if (user.is_admin && text.startsWith('查看會員 ')) {
+if (!isGroup && user.is_admin && text.startsWith('查看會員 ')) {
   const nickname = text.replace('查看會員 ', '').trim();
 
   if (!nickname) {
@@ -765,7 +848,7 @@ if (user.is_admin && text.startsWith('查看會員 ')) {
   });
 }
 
-if (text === '確認下注') {
+if (!isGroup && text === '確認下注') {
   const state = userState[userId];
 
   if (!state || state.type !== 'confirm_bets') {
@@ -795,7 +878,7 @@ if (text === '確認下注') {
   });
 }
 
-if (text === '取消下注') {
+if (!isGroup && text === '取消下注') {
   delete userState[userId];
 
   return client.replyMessage(event.replyToken, {
@@ -804,7 +887,7 @@ if (text === '取消下注') {
   });
 }
 
-if (text.startsWith('修改下注#')) {
+if (!isGroup && text.startsWith('修改下注#')) {
   if (!user.is_admin) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
@@ -999,7 +1082,7 @@ if (text.startsWith('修改下注#')) {
 }
 
 // ── 串關下注（不綁場次，一張票只存一筆）
-if (text.startsWith('下注#串關')) {
+if (!isGroup && text.startsWith('下注#串關')) {
   const lines = text
     .split('\n')
     .map(line => line.trim())
@@ -1087,7 +1170,7 @@ if (text.startsWith('下注#串關')) {
   });
 }
 
-if (text.startsWith('下注#')) {
+if (!isGroup && text.startsWith('下注#')) {
   const lines = text
   .split('\n')
   .map(line => line.trim())
