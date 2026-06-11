@@ -7,7 +7,108 @@ const fs = require('fs');
 const FormData = require('form-data');
 const dayjs = require('dayjs'); 
 const app = express();
-const { getTeamNameZh } = require('./teamName.js');
+const { getTeamNameZh, TEAM_NAMES_ZH } = require('./teamName.js');
+const TEAM_NAMES_ZH_SET = new Set(Object.values(TEAM_NAMES_ZH || {}));
+
+// 解析金額 token：支援 1k / 2.5k / 500
+function parseAmountToken(tok) {
+  if (tok == null) return null;
+  const raw = String(tok).trim().toLowerCase();
+  if (/^\d+(\.\d+)?k$/.test(raw)) return Number(raw.replace('k', '')) * 1000;
+  if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  return null;
+}
+
+// 解析普通下注的一行：<球隊> <條件...> <金額> <賠率>
+// 規則：最後一個純數字 = 賠率；倒數第二個可解析金額 = 金額；剩下第一個 token 若是已知中文隊名 = 下的球隊
+function parseNormalBetLine(row) {
+  const rest = row.trim().split(/\s+/).filter(Boolean);
+  let odds = null, amount = null;
+
+  if (rest.length && /^\d+(\.\d+)?$/.test(rest[rest.length - 1])) {
+    odds = Number(rest.pop());
+  }
+  if (rest.length) {
+    const amt = parseAmountToken(rest[rest.length - 1]);
+    if (amt != null) { amount = amt; rest.pop(); }
+  }
+  const team = (rest.length && TEAM_NAMES_ZH_SET.has(rest[0])) ? rest[0] : null;
+  const condition = rest.join(' '); // 保留隊名在條件裡，維持原本顯示
+
+  return { team, condition, amount, odds };
+}
+
+// 產生 CSV 字串（含 UTF-8 BOM，讓 Excel 正確顯示中文）
+function toCsv(rows, headers) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [headers.join(',')];
+  for (const r of rows) lines.push(headers.map(h => esc(r[h])).join(','));
+  return '﻿' + lines.join('\r\n');
+}
+
+const EXPORT_HEADERS = ['暱稱', 'User_id', '場次編號', '對戰', '票號', '下的球隊', '下注條件', '賠率', '金額'];
+
+// 依「會員」「場次」篩選，組出匯出用的資料列
+// memberFilter: 'all' | string[]（暱稱）；seqFilter: 'all' | number[]（場次編號）
+async function buildBetExport(memberFilter, seqFilter) {
+  let q = supabase
+    .from('bets')
+    .select('user_id, user_name, ticket_id, seq_no, team, condition, odds, amount, matches(home_team_name, away_team_name)');
+
+  if (memberFilter !== 'all') q = q.in('user_name', memberFilter);
+  if (seqFilter !== 'all') q = q.in('seq_no', seqFilter); // 指定場次時，串關(seq_no=null)不會被納入
+
+  const { data, error } = await q
+    .order('user_name', { ascending: true })
+    .order('seq_no', { ascending: true })
+    .order('ticket_id', { ascending: true });
+
+  if (error) throw error;
+
+  return (data || []).map((b) => {
+    const isParlay = b.ticket_id?.startsWith('P') || b.seq_no == null;
+    const matchup = isParlay
+      ? '串關'
+      : `${getTeamNameZh(b.matches?.home_team_name) || 'TBD'} vs ${getTeamNameZh(b.matches?.away_team_name) || 'TBD'}`;
+    return {
+      '暱稱': b.user_name || '',
+      'User_id': b.user_id || '',
+      '場次編號': isParlay ? '串關' : (b.seq_no ?? ''),
+      '對戰': matchup,
+      '票號': b.ticket_id || '',
+      '下的球隊': b.team || '',
+      '下注條件': b.condition || '',
+      '賠率': b.odds ?? '',
+      '金額': b.amount ?? ''
+    };
+  });
+}
+
+// 上傳 CSV 到 Supabase Storage 並回傳 1 小時簽名連結
+async function uploadCsvAndSign(csvString, filename) {
+  const bucket = 'exports';
+  const path = `bets/${filename}`;
+
+  const { error: upErr } = await supabase
+    .storage
+    .from(bucket)
+    .upload(path, Buffer.from(csvString, 'utf-8'), {
+      contentType: 'text/csv; charset=utf-8',
+      upsert: true
+    });
+  if (upErr) throw new Error(`上傳失敗（請確認 Supabase 有名為 "${bucket}" 的 bucket）：${upErr.message}`);
+
+  const { data, error } = await supabase
+    .storage
+    .from(bucket)
+    .createSignedUrl(path, 60 * 60);
+  if (error) throw new Error(`產生下載連結失敗：${error.message}`);
+
+  return data.signedUrl;
+}
 const OpenAI = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const utc = require('dayjs/plugin/utc');
@@ -76,6 +177,79 @@ if (event.type !== 'message') return;
 
 const text = event.message.text?.trim();
 if (!text) return;
+
+// ===== 匯出資料：進行中的多步驟流程（私訊/群組皆優先處理）=====
+if (typeof userState[userId]?.type === 'string' && userState[userId].type.startsWith('export_')) {
+  const st = userState[userId];
+
+  if (text === '取消' || text === '取消匯出') {
+    delete userState[userId];
+    return client.replyMessage(event.replyToken, { type: 'text', text: '已取消匯出' });
+  }
+
+  if (st.type === 'export_wait_member') {
+    const members = text.toLowerCase() === 'all'
+      ? 'all'
+      : text.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+    if (members !== 'all' && members.length === 0) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '請輸入會員, 例如: 禿頭, 糯米 或 all, 輸入取消結束'
+      });
+    }
+    userState[userId] = { type: 'export_wait_match', members };
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請輸入場次, 例如1,2,3 或 all, 輸入取消結束'
+    });
+  }
+
+  if (st.type === 'export_wait_match') {
+    const seqs = text.toLowerCase() === 'all'
+      ? 'all'
+      : text.split(/[,，、]/).map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+    if (seqs !== 'all' && seqs.length === 0) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: '請輸入場次, 例如1,2,3 或 all, 輸入取消結束'
+      });
+    }
+    delete userState[userId];
+    try {
+      const rows = await buildBetExport(st.members, seqs);
+      if (!rows.length) {
+        return client.replyMessage(event.replyToken, {
+          type: 'text', text: '❌ 此篩選條件下沒有任何下注紀錄'
+        });
+      }
+      const csv = toCsv(rows, EXPORT_HEADERS);
+      const fname = `bets_${dayjs().format('YYYYMMDD_HHmmss')}.csv`;
+      const url = await uploadCsvAndSign(csv, fname);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: `✅ 匯出完成，共 ${rows.length} 筆\n\n下載連結（1 小時內有效）：\n${url}`
+      });
+    } catch (e) {
+      console.error('匯出失敗:', e.response?.data || e.message || e);
+      return client.replyMessage(event.replyToken, {
+        type: 'text', text: `❌ 匯出失敗：${e.message || '請稍後再試'}`
+      });
+    }
+  }
+}
+
+// ===== 匯出資料：觸發（私訊/群組皆可，需 admin）=====
+if (text === '匯出資料' || text === '@匯出資料') {
+  const exportUser = await getUser(userId);
+  if (!exportUser || !exportUser.is_admin) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text', text: '❌ 只有管理員可以匯出資料'
+    });
+  }
+  userState[userId] = { type: 'export_wait_member' };
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: '請輸入會員, 例如: 禿頭, 糯米 或 all, 輸入取消結束'
+  });
+}
 
 // 群組只接受這三個 @ 指令
 if (isGroup) {
@@ -1242,7 +1416,7 @@ if (!seqNo || betLines.length === 0) {
       continue;
     }
 
-    const condition = row;
+    const { team, condition, amount, odds } = parseNormalBetLine(row);
    const ticketId ='T' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
     parsedBets.push({
@@ -1250,6 +1424,8 @@ if (!seqNo || betLines.length === 0) {
         nickname: user.nickname || '你',
         name: userName,
         condition,
+        amount,
+        odds,
         ticketId
       },
       payload: {
@@ -1258,10 +1434,10 @@ if (!seqNo || betLines.length === 0) {
         created_by: userId,
         match_id: match.id,
         seq_no: match.seq_no,
-        team: null,
+        team,
         condition,
-        amount: null,
-        odds: null,
+        amount,
+        odds,
         ticket_id: ticketId
       }
     });
@@ -1293,7 +1469,13 @@ if (!seqNo || betLines.length === 0) {
   };
 
   const betText = parsedBets.map((b, index) => {
-    return `${index + 1}. ${b.display.condition}\n票號：${b.display.ticketId}`;
+    const extra = [
+      b.display.amount != null ? `金額：${b.display.amount}` : null,
+      b.display.odds != null ? `賠率：${b.display.odds}` : null
+    ].filter(Boolean).join('　');
+    return `${index + 1}. ${b.display.condition}` +
+      (extra ? `\n   ${extra}` : '') +
+      `\n票號：${b.display.ticketId}`;
   }).join('\n\n');
 
   return client.replyMessage(event.replyToken, {
