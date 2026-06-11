@@ -1313,7 +1313,6 @@ const SYSTEM_PROMPT = `
   並引導使用者回到足球主題
 
 分析時優先參考：
-
 - 近期戰績
 - 對戰紀錄
 - 球隊狀態
@@ -1437,11 +1436,7 @@ async function getMatchAnalysis(userId, userText) {
   try {
     const response = await openai.responses.create({
       model: 'gpt-5-nano',
-
       input,
-
-      temperature: 0.2,
-
       max_output_tokens: 600,
 
       tools: [
