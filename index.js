@@ -1439,11 +1439,11 @@ async function getMatchAnalysis(userId, userText) {
       input,
       max_output_tokens: 600,
 
-      tools: [
-        {
-          type: 'web_search_preview',
-        },
-      ],
+      // tools: [
+      //   {
+      //     type: 'web_search_preview',
+      //   },
+      // ],
     });
 
     const reply =
