@@ -2043,7 +2043,7 @@ async function generateDailyAnalysisMessage() {
 請根據 DB 賽程資料，結合 web search 最新資訊，產生 2026 世界盃每日賽事分析。
 適合 LINE 推播閱讀。
 回答控制在 1000 字內。
-重點式、有趣一點，但不要保證穩贏、不要鼓吹重押，可以推薦比分或怎麼下比較好。
+重點式、有趣一點，但不要保證穩贏、每一場都要建議比數。
 如果最新名單、傷兵、新聞查不到，請說「目前尚未確認」。
 不要使用**。
 如果要引用新聞連結最多2則。
@@ -2200,5 +2200,5 @@ app.listen(8686, () => {
   console.log('running')
   console.log('TZ=', process.env.TZ);
   console.log('Date=', new Date().toString());
- scheduleDailyAnalysisBroadcast(23, 10);
+ scheduleDailyAnalysisBroadcast(22, 30);
 });
