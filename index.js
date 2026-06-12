@@ -1516,7 +1516,7 @@ if (!seqNo || betLines.length === 0) {
 }
 
 if (!isGroup && text.trim() === '下注') {
-  const { start, end } = getTomorrowRange();
+  const { start, end } = getBetMatchRange();
 
   const { data: matches, error } = await supabase
     .from('matches')
@@ -2183,15 +2183,23 @@ function parseAmount(value) {
   return Number(text);
 }
 
-function getTomorrowRange() {
-  const tomorrow = dayjs().tz('Asia/Taipei').add(1, 'day');
-  const start = tomorrow.format('YYYY-MM-DD 00:00');
-  const end = tomorrow.format('YYYY-MM-DD 23:59');
+function getBetMatchRange() {
+  const now = dayjs().tz('Asia/Taipei');
+
+  const targetDate =
+    now.hour() >= 9
+      ? now.add(1, 'day')
+      : now;
+
+  const start = targetDate.format('YYYY-MM-DD 00:00');
+  const end = targetDate.format('YYYY-MM-DD 23:59');
+console.log('UTC:', dayjs().format());
+console.log('TW :', dayjs().tz('Asia/Taipei').format());
   return { start, end };
 }
 
 setupRichMenu().catch(console.error);
 app.listen(8686, () => {
   console.log('running')
- scheduleDailyAnalysisBroadcast(22, 30);
+//  scheduleDailyAnalysisBroadcast(22, 30);
 });
