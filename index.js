@@ -8,6 +8,18 @@ const FormData = require('form-data');
 const dayjs = require('dayjs'); 
 const app = express();
 const { getTeamNameZh, TEAM_NAMES_ZH } = require('./teamName.js');
+const { classifyBet } = require('./betRules.js');
+const STRUCTURED_BET_KEYS = ['period', 'market', 'selection', 'line', 'line_type', 'result', 'payout'];
+// 寫入 bets；若結構化欄位尚未建立（migration 未跑），自動降級相容模式，確保下注不中斷
+async function insertBets(payloads) {
+  let { error } = await supabase.from('bets').insert(payloads);
+  if (error && /column|schema cache|PGRST204|could not find/i.test(((error.message || '') + (error.code || '')))) {
+    const stripped = payloads.map(p => { const c = { ...p }; for (const k of STRUCTURED_BET_KEYS) delete c[k]; return c; });
+    ({ error } = await supabase.from('bets').insert(stripped));
+    if (!error) console.warn('bets 結構化欄位尚未建立，已用相容模式寫入（請執行 migration）');
+  }
+  return error;
+}
 const TEAM_NAMES_ZH_SET = new Set(Object.values(TEAM_NAMES_ZH || {}));
 
 // 解析金額 token：支援 1k / 2.5k / 500
@@ -1032,9 +1044,7 @@ if (!isGroup && text === '確認下注') {
     });
   }
 
-  const { error } = await supabase
-    .from('bets')
-    .insert(state.payload);
+  const error = await insertBets(state.payload);
 
   delete userState[userId];
 
@@ -1324,6 +1334,11 @@ if (!isGroup && text.startsWith('下注#串關')) {
     condition,
     amount,
     odds: null,
+    period: '全場',
+    market: '串關',
+    selection: null,
+    line: null,
+    line_type: null,
     ticket_id: ticketId
   };
 
@@ -1417,6 +1432,7 @@ if (!seqNo || betLines.length === 0) {
     }
 
     const { team, condition, amount, odds } = parseNormalBetLine(row);
+    const cls = classifyBet(condition);
    const ticketId ='T' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
     parsedBets.push({
@@ -1426,6 +1442,7 @@ if (!seqNo || betLines.length === 0) {
         condition,
         amount,
         odds,
+        cls,
         ticketId
       },
       payload: {
@@ -1438,6 +1455,11 @@ if (!seqNo || betLines.length === 0) {
         condition,
         amount,
         odds,
+        period: cls.period,
+        market: cls.market,
+        selection: cls.selection,
+        line: cls.line,
+        line_type: cls.line_type,
         ticket_id: ticketId
       }
     });
@@ -1469,11 +1491,13 @@ if (!seqNo || betLines.length === 0) {
   };
 
   const betText = parsedBets.map((b, index) => {
+    const cls = b.display.cls || {};
+    const tag = `［${cls.period || '全場'}·${cls.market || '其他'}］`;
     const extra = [
       b.display.amount != null ? `金額：${b.display.amount}` : null,
       b.display.odds != null ? `賠率：${b.display.odds}` : null
     ].filter(Boolean).join('　');
-    return `${index + 1}. ${b.display.condition}` +
+    return `${index + 1}. ${tag} ${b.display.condition}` +
       (extra ? `\n   ${extra}` : '') +
       `\n票號：${b.display.ticketId}`;
   }).join('\n\n');
