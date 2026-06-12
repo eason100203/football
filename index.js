@@ -1983,21 +1983,18 @@ async function broadcastText(message) {
 }
 
 function getTargetAnalysisDate() {
-  const now = dayjs();
+  const now = dayjs().tz('Asia/Taipei');
 
-  const worldCupStart = dayjs('2026-06-12 03:00');
+  const worldCupStart = dayjs.tz('2026-06-12 03:00', 'Asia/Taipei');
 
-  // 6/12 03:00 以前，都先分析 6/12
   if (now.isBefore(worldCupStart)) {
     return '2026-06-12';
   }
 
-  // 每天 22:00 後，分析隔天賽事
   if (now.hour() >= 22) {
     return now.add(1, 'day').format('YYYY-MM-DD');
   }
 
-  // 其他時間，分析當天
   return now.format('YYYY-MM-DD');
 }
 
@@ -2203,5 +2200,5 @@ app.listen(8686, () => {
   console.log('running')
   console.log('TZ=', process.env.TZ);
   console.log('Date=', new Date().toString());
-//  scheduleDailyAnalysisBroadcast(22, 30);
+ scheduleDailyAnalysisBroadcast(23, 10);
 });
