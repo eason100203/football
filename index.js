@@ -2201,5 +2201,7 @@ console.log('TW :', dayjs().tz('Asia/Taipei').format());
 setupRichMenu().catch(console.error);
 app.listen(8686, () => {
   console.log('running')
+  console.log('TZ=', process.env.TZ);
+  console.log('Date=', new Date().toString());
 //  scheduleDailyAnalysisBroadcast(22, 30);
 });
