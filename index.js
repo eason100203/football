@@ -1034,7 +1034,7 @@ if (!isGroup && user.is_admin && text.startsWith('查看會員 ')) {
   });
 }
 
-if (!isGroup && text === '確認下注') {
+if (!isGroup && text === '確認') {
   const state = userState[userId];
 
   if (!state || state.type !== 'confirm_bets') {
@@ -1062,7 +1062,7 @@ if (!isGroup && text === '確認下注') {
   });
 }
 
-if (!isGroup && text === '取消下注') {
+if (!isGroup && text === '取消') {
   delete userState[userId];
 
   return client.replyMessage(event.replyToken, {
@@ -1078,6 +1078,7 @@ if (!isGroup && text.startsWith('修改下注#')) {
       text: '❌ 只有管理員可以修改下注'
     });
   }
+  delete userState[userId];
 
   const lines = text
     .split('\n')
@@ -1354,8 +1355,8 @@ if (!isGroup && text.startsWith('下注#串關')) {
       `票號：${ticketId}\n` +
       `金額：${amount}\n\n` +
       condition +
-      '\n\n✅確認請輸入：確認下注\n' +
-      '❌取消請輸入：取消下注'
+      '\n\n✅確認請輸入：確認\n' +
+      '❌取消請輸入：取消'
   });
 }
 
@@ -1509,8 +1510,156 @@ if (!seqNo || betLines.length === 0) {
       `場次：#${match.seq_no} ${getTeamNameZh(match.home_team_name)|| 'TBD'} vs ${getTeamNameZh(match.away_team_name)|| 'TBD'}\n` +
       `時間：${match.match_date || '未設定'}\n\n` +
       betText +
-      '\n\n✅確認請輸入：確認下注\n' +
-      '❌取消請輸入：取消下注'
+      '\n\n✅確認請輸入：確認\n' +
+      '❌取消請輸入：取消'
+  });
+}
+
+if (!isGroup && text.trim() === '下注') {
+  const { start, end } = getTomorrowRange();
+
+  const { data: matches, error } = await supabase
+    .from('matches')
+    .select('id, seq_no, home_team_name, away_team_name, match_date, status')
+    .gte('match_date', start)
+    .lte('match_date', end)
+    .order('seq_no', { ascending: true });
+
+  if (error || !matches || matches.length === 0) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 明日暫無賽事'
+    });
+  }
+
+  userState[userId] = {
+    type: 'lazy_bet_template',
+    matches: matches.map(m => ({
+      id: m.id,
+      seq_no: m.seq_no,
+      home: getTeamNameZh(m.home_team_name) || 'TBD',
+      away: getTeamNameZh(m.away_team_name) || 'TBD'
+    }))
+  };
+
+  const templateText = userState[userId].matches.map((m) => {
+  return `賽事${m.seq_no} ${m.home}VS${m.away}\n\n` +
+    `第一筆：\n第二筆：\n第三筆：\n第四筆：\n第五筆：`;
+}).join('\n\n');
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text:
+      templateText
+  });
+}
+
+if (!isGroup && /賽事\d+/.test(text) && /第[一二三四五六七八九十]+筆/.test(text) && userState[userId]?.type === 'lazy_bet_template') {
+
+  const matchList = userState[userId].matches;
+  const userName = user.nickname || user.name || '未知會員';
+
+  const parsedBets = [];
+  const errors = [];
+
+  // 用「賽事N」切分區塊
+  const blocks = text.split(/(?=賽事\d+)/).map(b => b.trim()).filter(Boolean);
+
+  for (const block of blocks) {
+    const headerMatch = block.match(/^賽事(\d+)/);
+  if (!headerMatch) continue;
+
+  const seqNo = Number(headerMatch[1]);
+  const matchInfo = matchList.find(m => m.seq_no === seqNo);
+  if (!matchInfo) {
+    errors.push(`找不到「賽事${seqNo}」`);
+    continue;
+  }
+
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+
+    for (const line of lines) {
+      const lineMatch = line.match(/^第([一二三四五六七八九十]+)筆[：:]\s*(.*)$/);
+      if (!lineMatch) continue;
+
+      const content = lineMatch[2].trim();
+      if (!content) continue; // 空白筆數跳過
+
+      const { team, condition, amount, odds } = parseNormalBetLine(content);
+
+      if (odds == null) {
+        errors.push(`賽事${headerMatch[1]} 第${lineMatch[1]}筆格式錯誤：${content}`);
+        continue;
+      }
+
+      const ticketId = 'T' + Math.random().toString(36).substring(2, 10).toUpperCase();
+
+      parsedBets.push({
+        display: {
+          nickname: user.nickname || '你',
+          name: userName,
+          matchLabel: `${matchInfo.home}VS${matchInfo.away}`,
+          team,
+          condition,
+          amount,
+          odds,
+          ticketId
+        },
+        payload: {
+          user_id: userId,
+          user_name: userName,
+          created_by: userId,
+          match_id: matchInfo.id,
+          seq_no: matchInfo.seq_no,
+          team,
+          condition,
+          amount,
+          odds,
+          ticket_id: ticketId
+        }
+      });
+    }
+  }
+
+  if (errors.length > 0) {
+    delete userState[userId];
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 下注資料有錯，不能確認下注\n\n' + errors.join('\n')
+    });
+  }
+
+  if (parsedBets.length === 0) {
+    delete userState[userId];
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 沒有可下注資料'
+    });
+  }
+
+  userState[userId] = {
+    type: 'confirm_bets',
+    payload: parsedBets.map(b => b.payload)
+  };
+
+  const betText = parsedBets.map((b, index) => {
+    const teamPart = b.display.team ? `${b.display.team} ` : '';
+    const extra = [
+      b.display.amount != null ? `金額：${b.display.amount}` : null,
+      b.display.odds != null ? `賠率：${b.display.odds}` : null
+    ].filter(Boolean).join('　');
+    return `${index + 1}. [${b.display.matchLabel}] ${teamPart}${b.display.condition}` +
+      (extra ? `\n   ${extra}` : '') +
+      `\n票號：${b.display.ticketId}`;
+  }).join('\n\n');
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text:
+      '請確認下注資料：\n\n' +
+      betText +
+      '\n\n✅確認請輸入：確認\n' +
+      '❌取消請輸入：取消'
   });
 }
 
@@ -2032,6 +2181,13 @@ function parseAmount(value) {
   }
 
   return Number(text);
+}
+
+function getTomorrowRange() {
+  const tomorrow = dayjs().tz('Asia/Taipei').add(1, 'day');
+  const start = tomorrow.format('YYYY-MM-DD 00:00');
+  const end = tomorrow.format('YYYY-MM-DD 23:59');
+  return { start, end };
 }
 
 setupRichMenu().catch(console.error);
