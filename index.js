@@ -2383,7 +2383,7 @@ function getBetMatchRange() {
   const now = dayjs().tz('Asia/Taipei');
 
   const targetDate =
-    now.hour() >= 9
+    now.hour() >= 12
       ? now.add(1, 'day')
       : now;
 
