@@ -161,12 +161,25 @@ let chatHistory = {};
 let userState = {}; // 記錄用戶狀態
 //#region 主程式
 async function handleEvent(event) {
- const userId = event.source.userId;
+const userId = event.source.userId;
 if (!userId) return;
 
 const isGroup =
   event.source.type === 'group' ||
   event.source.type === 'room';
+
+
+const groupId = event.source.groupId || event.source.roomId;
+
+if (isGroup && userId && groupId) {
+  await supabase
+    .from('group_members')
+    .upsert({
+      group_id: groupId,
+      user_id: userId,
+      updated_at: new Date().toISOString()
+    });
+}
 
 if (event.type === 'follow') {
   await ensureUser(userId);
@@ -687,6 +700,31 @@ if (!isGroup && text === '賽事下注紀錄') {
 // ── 群組：今日下注紀錄
 if (isGroup && text === '下注紀錄') {
   try {
+      const groupId = event.source.groupId || event.source.roomId;
+
+    if (!groupId) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '❌ 取得群組資訊失敗'
+      });
+    }
+
+    const { data: members, error: memberError } = await supabase
+      .from('group_members')
+      .select('user_id')
+      .eq('group_id', groupId);
+
+    if (memberError) throw memberError;
+
+    const memberIds = (members || []).map(m => m.user_id);
+
+    if (!memberIds.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '📋 目前沒有群組會員資料'
+      });
+    }
+
     const { start, end } = getBetMatchRange();
 
     const { data: matches, error: matchError } = await supabase
@@ -711,6 +749,7 @@ if (isGroup && text === '下注紀錄') {
       .from('bets')
       .select('user_name, condition, amount, odds, match_id, ticket_id')
       .in('match_id', matchIds)
+      .in('user_id', memberIds)
       .order('id', { ascending: true });
 
     if (betsError) throw betsError;
