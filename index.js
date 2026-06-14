@@ -9,8 +9,8 @@ const dayjs = require('dayjs');
 const app = express();
 const { getTeamNameZh, TEAM_NAMES_ZH } = require('./teamName.js');
 const { classifyBet, settleBet, payoutFor, RESULT } = require('./betRules.js');
-const { getScores } = require('./apiFootball');
 const { syncHandicap } = require('./scripts/sync-handicap');
+const { autoSettle } = require('./scripts/auto-settle');
 const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
 const STRUCTURED_BET_KEYS = ['period', 'market', 'selection', 'line', 'line_type', 'result', 'payout', 'inverse'];
 // 寫入 bets；若結構化欄位尚未建立（migration 未跑），自動降級相容模式，確保下注不中斷
@@ -60,6 +60,19 @@ function calcInverse(cls, homeTeamZh, homeIsGiver) {
   if (homeIsGiver == null) return null;
   const selectionIsHome = cls.selection === homeTeamZh;
   return homeIsGiver ? !selectionIsHome : selectionIsHome;
+}
+
+// 解析串關 condition 的單行：「#場次號 隊名/條件 賠率」
+// 回傳 { seqNo, condition, odds } 或 null（格式不符）
+function parseParlayLeg(line) {
+  const seqMatch = line.match(/^#(\d+)\s+/);
+  if (!seqMatch) return null;
+  const rest = line.slice(seqMatch[0].length).trim();
+  const tokens = rest.split(/\s+/);
+  if (tokens.length < 2) return null;
+  const odds = parseFloat(tokens[tokens.length - 1]);
+  if (isNaN(odds)) return null;
+  return { seqNo: Number(seqMatch[1]), condition: tokens.slice(0, -1).join(' '), odds };
 }
 
 // 產生 CSV 字串（含 UTF-8 BOM，讓 Excel 正確顯示中文）
@@ -1205,131 +1218,34 @@ if (!isGroup && user.is_admin && text === '結算') {
     });
   }
 
-  const todayTW = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD');
-  const rangeStart = `${todayTW} 00:00`;
-  const rangeEnd   = `${todayTW} 23:59`;
-
-  const { data: settleMatches, error: smErr } = await supabase
-    .from('matches')
-    .select('id, seq_no, home_team_name, away_team_name, api_football_fixture_id, home_is_giver, status')
-    .eq('status', 'FINISHED')
-    .is('settled_at', null)
-    .gte('match_date', rangeStart)
-    .lte('match_date', rangeEnd)
-    .order('seq_no', { ascending: true });
-
-  if (smErr) {
+  let stats;
+  try {
+    stats = await autoSettle({ supabase, apiKey: API_FOOTBALL_KEY });
+  } catch (err) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: `❌ 查詢失敗：${smErr.message}`
+      text: `❌ 結算失敗：${err.message}`
     });
   }
 
-  if (!settleMatches?.length) {
+  if (!stats) {
+    const todayTW = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD');
     return client.replyMessage(event.replyToken, {
       type: 'text',
       text: `✅ 今日（${todayTW}）無可結算場次（狀態需為 FINISHED 且未結算）`
     });
   }
 
-  const nowIso = new Date().toISOString();
-  let settledMatchCount = 0, skippedMatchCount = 0;
-  let autoCount = 0, manualCount = 0;
-  const memberPayouts = {}; // user_name → 淨輸贏
-
-  for (const match of settleMatches) {
-    const label = `#${match.seq_no} ${getTeamNameZh(match.home_team_name)} vs ${getTeamNameZh(match.away_team_name)}`;
-
-    if (!match.api_football_fixture_id) {
-      skippedMatchCount++;
-      console.warn(`[結算] 跳過（無 fixture_id）: ${label}`);
-      continue;
-    }
-
-    const scores = await getScores({ apiKey: API_FOOTBALL_KEY, fixtureId: match.api_football_fixture_id });
-
-    if (!scores || scores.fullTime.home == null || scores.fullTime.away == null) {
-      skippedMatchCount++;
-      console.warn(`[結算] 跳過（比分未知，可能比賽剛結束）: ${label}`);
-      continue;
-    }
-
-    // 寫入比分
-    await supabase.from('matches').update({
-      score_full: { home: scores.fullTime.home, away: scores.fullTime.away },
-      score_half: scores.halfTime.home != null
-        ? { home: scores.halfTime.home, away: scores.halfTime.away }
-        : null
-    }).eq('id', match.id);
-
-    // 撈該場未結算注單
-    const { data: unsettledBets, error: betsErr } = await supabase
-      .from('bets')
-      .select('id, ticket_id, user_name, market, selection, line, line_type, period, inverse, amount, odds')
-      .eq('match_id', match.id)
-      .is('result', null);
-
-    if (betsErr) {
-      console.warn(`[結算] 撈注單失敗 ${label}:`, betsErr.message);
-      continue;
-    }
-
-    const homeTeamZh = getTeamNameZh(match.home_team_name);
-    const awayTeamZh = getTeamNameZh(match.away_team_name);
-    const fullScore  = { home: scores.fullTime.home,  away: scores.fullTime.away };
-    const halfScore  = scores.halfTime.home != null
-      ? { home: scores.halfTime.home, away: scores.halfTime.away }
-      : null;
-
-    for (const bet of (unsettledBets || [])) {
-      // 串關：標人工，TODO: 待實作串關結算邏輯
-      if (bet.ticket_id?.startsWith('P')) {
-        console.log(`[結算] 串關標人工 (TODO): ticket=${bet.ticket_id}`);
-        await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
-        manualCount++;
-        continue;
-      }
-
-      // 半場注單：半場比分不存在時標人工
-      const score = bet.period === '半場' ? halfScore : fullScore;
-      if (!score) {
-        await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
-        manualCount++;
-        continue;
-      }
-
-      const result = settleBet(bet, score, {
-        homeTeamZh,
-        awayTeamZh,
-        inverse: bet.inverse ?? false
-      });
-
-      if (result === RESULT.MANUAL || result === RESULT.PENDING) {
-        await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
-        manualCount++;
-      } else {
-        const payout = payoutFor(result, bet.amount, bet.odds);
-        await supabase.from('bets').update({ result, payout: payout ?? 0 }).eq('id', bet.id);
-        autoCount++;
-        if (payout != null) {
-          const name = bet.user_name || '未知';
-          memberPayouts[name] = (memberPayouts[name] || 0) + payout;
-        }
-      }
-    }
-
-    // 標記場次已結算
-    await supabase.from('matches').update({ settled_at: nowIso }).eq('id', match.id);
-    settledMatchCount++;
-  }
-
-  // 回報訊息
+  const { date, settledMatchCount, skippedMatchCount, autoCount, manualCount, parlayAutoCount, parlayManualCount, memberPayouts } = stats;
   const totalBets = autoCount + manualCount;
   const replyLines = [
-    `✅ 結算完成（${todayTW}）`,
+    `✅ 結算完成（${date}）`,
     `- 結算場次：${settledMatchCount} 場`,
     `- 結算筆數：${totalBets} 筆（自動 ${autoCount}、人工 ${manualCount}）`,
   ];
+  if (parlayAutoCount + parlayManualCount > 0) {
+    replyLines.push(`- 串關：${parlayAutoCount} 張自動 / ${parlayManualCount} 張人工`);
+  }
   if (skippedMatchCount > 0) {
     replyLines.push(`- 跳過場次：${skippedMatchCount} 場（無 fixture_id 或比分未知）`);
   }
@@ -1337,7 +1253,7 @@ if (!isGroup && user.is_admin && text === '結算') {
   const memberEntries = Object.entries(memberPayouts).sort((a, b) => b[1] - a[1]);
   if (memberEntries.length > 0) {
     replyLines.push('');
-    replyLines.push(`📊 會員輸贏總表（${todayTW}）`);
+    replyLines.push(`📊 會員輸贏總表（${date}）`);
     let grandTotal = 0;
     for (const [name, p] of memberEntries) {
       replyLines.push(`${name}  ${p >= 0 ? '+' : ''}${p.toLocaleString()}`);

@@ -1,9 +1,7 @@
 name: Sync Matches
 
 on:
-  schedule:
-    - cron: '0 */2 * * *'   # 每 2 小時執行一次
-  workflow_dispatch:          # 允許手動觸發
+  workflow_dispatch:   # 手動觸發（cron 已移至 sync-all.yml）
 
 jobs:
   sync:
