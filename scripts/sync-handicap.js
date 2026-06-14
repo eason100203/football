@@ -10,18 +10,21 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 /**
- * 掃描 home_is_giver IS NULL 的場次並回填。
- * @param {{ supabase, apiKey, cutoffDays? }} opts
+ * 掃描 home_is_giver IS NULL 且尚未開賽的場次並回填。
+ * 只處理未來 futureDays 天內的場次，已開賽場次一律跳過。
+ * @param {{ supabase, apiKey, futureDays? }} opts
  * @returns {{ scanned, success, neutral, failed, failedLabels }}
  */
-async function syncHandicap({ supabase, apiKey, cutoffDays = 7 }) {
-  const cutoff = dayjs().tz('Asia/Taipei').subtract(cutoffDays, 'day').format('YYYY-MM-DD 00:00');
+async function syncHandicap({ supabase, apiKey, futureDays = 7 }) {
+  const now         = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm');
+  const futureLimit = dayjs().tz('Asia/Taipei').add(futureDays, 'day').format('YYYY-MM-DD 23:59');
 
   const { data: matches, error: fetchError } = await supabase
     .from('matches')
     .select('id, seq_no, home_team_name, away_team_name, match_date, api_football_fixture_id')
     .is('home_is_giver', null)
-    .gte('match_date', cutoff)
+    .gt('match_date', now)           // 排除已開賽場次
+    .lte('match_date', futureLimit)  // 只抓未來 7 天
     .order('seq_no', { ascending: true });
 
   if (fetchError) throw new Error(`查詢失敗: ${fetchError.message}`);
