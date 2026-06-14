@@ -12,7 +12,7 @@ describe('classifyBet', () => {
     expect(r.period).toBe('全場');
     expect(r.selection).toBe('日本');
     expect(r.line).toBe(1);
-    expect(r.line_type).toBe('平');
+    expect(r.line_type).toBe('0');
   });
 
   test('日本 2+50 → 讓分 +50', () => {
@@ -29,11 +29,11 @@ describe('classifyBet', () => {
     expect(r.line_type).toBe('-50');
   });
 
-  test('巴西 讓0 → 讓分 line=0 平', () => {
+  test('巴西 讓0 → 讓分 line=0 line_type=0', () => {
     const r = classifyBet('巴西 讓0');
     expect(r.market).toBe('讓分');
     expect(r.line).toBe(0);
-    expect(r.line_type).toBe('平');
+    expect(r.line_type).toBe('0');
   });
 
   test('半場 日本 1平 → period 半場', () => {
@@ -280,5 +280,147 @@ describe('parlay legMultiplier', () => {
   test('WON + LOST → combined = 0', () => {
     const combined = legMultiplier(RESULT.WON, 0.9) * legMultiplier(RESULT.LOST, 0.8);
     expect(combined).toBe(0);
+  });
+});
+
+// ─── 擴充：classifyBet 讓分 新格式（12 條）──────────────────────────────────
+
+describe('classifyBet 讓分 — 擴充格式', () => {
+  // 整數平盤：各種寫法都落 line_type='0'
+  test('美國 0 → 讓分 line=0 0', () => {
+    const r = classifyBet('美國 0');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('美國');
+    expect(r.line).toBe(0);
+    expect(r.line_type).toBe('0');
+  });
+
+  test('美國 0平 → 讓分 line=0 0', () => {
+    const r = classifyBet('美國 0平');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(0);
+    expect(r.line_type).toBe('0');
+  });
+
+  test('美國 讓1 → 讓分 line=1 0', () => {
+    const r = classifyBet('美國 讓1');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('美國');
+    expect(r.line).toBe(1);
+    expect(r.line_type).toBe('0');
+  });
+
+  test('美國 1 → 讓分 line=1 0', () => {
+    const r = classifyBet('美國 1');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(1);
+    expect(r.line_type).toBe('0');
+  });
+
+  test('美國 2 → 讓分 line=2 0', () => {
+    const r = classifyBet('美國 2');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(2);
+    expect(r.line_type).toBe('0');
+  });
+
+  // 四分之一盤：0+50
+  test('美國 0+50 → 讓分 line=0 +50', () => {
+    const r = classifyBet('美國 0+50');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(0);
+    expect(r.line_type).toBe('+50');
+  });
+
+  // 四分之三盤：2-50
+  test('美國 2-50 → 讓分 line=2 -50', () => {
+    const r = classifyBet('美國 2-50');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(2);
+    expect(r.line_type).toBe('-50');
+  });
+
+  // 半盤：N.5 格式
+  test('美國 0.5 → 讓分 line=0.5 .5', () => {
+    const r = classifyBet('美國 0.5');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('美國');
+    expect(r.line).toBe(0.5);
+    expect(r.line_type).toBe('.5');
+  });
+
+  test('美國 1.5 → 讓分 line=1.5 .5', () => {
+    const r = classifyBet('美國 1.5');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(1.5);
+    expect(r.line_type).toBe('.5');
+  });
+
+  test('美國 2.5 → 讓分 line=2.5 .5', () => {
+    const r = classifyBet('美國 2.5');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(2.5);
+    expect(r.line_type).toBe('.5');
+  });
+
+  // 半盤：讓N.5 格式
+  test('美國 讓0.5 → 讓分 line=0.5 .5', () => {
+    const r = classifyBet('美國 讓0.5');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(0.5);
+    expect(r.line_type).toBe('.5');
+  });
+
+  test('美國 讓1.5 → 讓分 line=1.5 .5', () => {
+    const r = classifyBet('美國 讓1.5');
+    expect(r.market).toBe('讓分');
+    expect(r.line).toBe(1.5);
+    expect(r.line_type).toBe('.5');
+  });
+});
+
+// ─── 擴充：settleBet 讓分 半盤 .5（9 條）────────────────────────────────────
+
+describe('settleBet 讓分 半盤 .5', () => {
+  // 讓0.5：win by 1+ → WON；draw or lose → LOST
+  test('讓0.5 home 1-0（margin=1 > 0.5）→ WON', () => {
+    const bet = { market: '讓分', selection: '日本', line: 0.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 1, away: 0 }, CTX)).toBe(RESULT.WON);
+  });
+  test('讓0.5 draw 0-0（margin=0 < 0.5）→ LOST', () => {
+    const bet = { market: '讓分', selection: '日本', line: 0.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 0, away: 0 }, CTX)).toBe(RESULT.LOST);
+  });
+  test('讓0.5 home 0-1（margin=-1 < 0.5）→ LOST', () => {
+    const bet = { market: '讓分', selection: '日本', line: 0.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 0, away: 1 }, CTX)).toBe(RESULT.LOST);
+  });
+
+  // 讓1.5：win by 2+ → WON；win by 1 or less → LOST
+  test('讓1.5 home 2-0（margin=2 > 1.5）→ WON', () => {
+    const bet = { market: '讓分', selection: '日本', line: 1.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 2, away: 0 }, CTX)).toBe(RESULT.WON);
+  });
+  test('讓1.5 home 1-0（margin=1 < 1.5）→ LOST', () => {
+    const bet = { market: '讓分', selection: '日本', line: 1.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 1, away: 0 }, CTX)).toBe(RESULT.LOST);
+  });
+  test('讓1.5 draw 0-0（margin=0 < 1.5）→ LOST', () => {
+    const bet = { market: '讓分', selection: '日本', line: 1.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 0, away: 0 }, CTX)).toBe(RESULT.LOST);
+  });
+
+  // 讓2.5：win by 3+ → WON；win by 2 or less → LOST
+  test('讓2.5 home 3-0（margin=3 > 2.5）→ WON', () => {
+    const bet = { market: '讓分', selection: '日本', line: 2.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 3, away: 0 }, CTX)).toBe(RESULT.WON);
+  });
+  test('讓2.5 home 2-0（margin=2 < 2.5）→ LOST', () => {
+    const bet = { market: '讓分', selection: '日本', line: 2.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 2, away: 0 }, CTX)).toBe(RESULT.LOST);
+  });
+  test('讓2.5 home 1-0（margin=1 < 2.5）→ LOST', () => {
+    const bet = { market: '讓分', selection: '日本', line: 2.5, line_type: '.5' };
+    expect(settleBet(bet, { home: 1, away: 0 }, CTX)).toBe(RESULT.LOST);
   });
 });

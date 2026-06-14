@@ -65,11 +65,16 @@ function firstTeam(t) {
 }
 function hasTeam(t) { return firstTeam(t) != null; }
 
-// 讓分：剛好贏 A 球時，後綴決定結果
+// 讓分：依 suffix 決定結果
+// .5 線：無平手可能，margin > A → WON，否則 LOST
+// 0/'平'：整數平盤，margin = A → PUSH（'平' 保留作舊資料相容）
+// +50：Quarter+，margin = A → HALF_WON
+// -50：Quarter-，margin = A → HALF_LOST
 function handicapResult(margin, A, suffix) {
+  if (suffix === '.5') return margin > A ? RESULT.WON : RESULT.LOST;
   if (margin > A) return RESULT.WON;
   if (margin < A) return RESULT.LOST;
-  if (suffix === '平') return RESULT.PUSH;
+  if (suffix === '0' || suffix === '平') return RESULT.PUSH;
   if (suffix === '+50') return RESULT.HALF_WON;
   if (suffix === '-50') return RESULT.HALF_LOST;
   return RESULT.MANUAL;
@@ -138,15 +143,20 @@ const MARKETS = {
     },
   },
   讓分: {
-    match(t) { return hasTeam(t) && /(讓0|0\s*平|\d+\s*平|\d+\s*[+\-]\s*50)/.test(t); },
+    // 寬鬆 match：有隊名 + 有數字即視為讓分（角球/大小已在前面被分走）
+    match(t) { return hasTeam(t) && /\d/.test(t); },
     parse(t) {
       const team = firstTeam(t);
-      let line = null, suffix = null, m;
-      if (/讓0|(?:^|\s)0\s*平/.test(t)) { line = 0; suffix = '平'; }
-      else if ((m = t.match(/(\d+)\s*\+\s*50/))) { line = Number(m[1]); suffix = '+50'; }
-      else if ((m = t.match(/(\d+)\s*-\s*50/))) { line = Number(m[1]); suffix = '-50'; }
-      else if ((m = t.match(/(\d+)\s*平/))) { line = Number(m[1]); suffix = '平'; }
-      return { market: '讓分', selection: team, line, line_type: suffix };
+      let line = null, line_type = null, m;
+      if ((m = t.match(/(\d+)\s*\+\s*50/))) {
+        line = Number(m[1]); line_type = '+50';
+      } else if ((m = t.match(/(\d+)\s*-\s*50/))) {
+        line = Number(m[1]); line_type = '-50';
+      } else if ((m = t.match(/讓?(\d+(?:\.\d+)?)/))) {
+        line = Number(m[1]);
+        line_type = line % 1 !== 0 ? '.5' : '0';
+      }
+      return { market: '讓分', selection: team, line, line_type };
     },
     settle(bet, score, ctx = {}) {
       if (bet.line == null || !bet.selection) return RESULT.MANUAL;
