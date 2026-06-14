@@ -1,4 +1,4 @@
-export const TEAM_NAMES_ZH = {
+const TEAM_NAMES_ZH = {
   // 歐洲
   "Germany": "德國",
   "France": "法國",
@@ -29,6 +29,7 @@ export const TEAM_NAMES_ZH = {
   "Albania": "阿爾巴尼亞",
   "Czechia": "捷克",
   "Bosnia-Herzegovina": "波赫",
+  "Bosnia & Herzegovina": "波斯尼亞和黑塞哥維那",
   "Curaçao": "庫拉索",
   // 南美
   "Brazil": "巴西",
@@ -93,6 +94,8 @@ export const TEAM_NAMES_ZH = {
   "Fiji": "斐濟",
 };
 
-export function getTeamNameZh(englishName) {
+function getTeamNameZh(englishName) {
   return TEAM_NAMES_ZH[englishName] || englishName; // 找不到就回傳英文
 }
+
+module.exports = { TEAM_NAMES_ZH, getTeamNameZh };

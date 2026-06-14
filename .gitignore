@@ -2,3 +2,4 @@
 .DS_Store
 .local-tools/
 *.log
+node_modules/
