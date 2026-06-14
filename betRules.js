@@ -25,6 +25,17 @@ const RESULT = {
   MANUAL: 'manual',
 };
 
+// 鏡像結果：贏↔輸，半贏↔半輸，走盤/人工 不變
+function mirrorResult(result) {
+  switch (result) {
+    case RESULT.WON:       return RESULT.LOST;
+    case RESULT.LOST:      return RESULT.WON;
+    case RESULT.HALF_WON:  return RESULT.HALF_LOST;
+    case RESULT.HALF_LOST: return RESULT.HALF_WON;
+    default:               return result;
+  }
+}
+
 // 結果 → 盈虧金額（賠率為淨賠率：贏的是純利，本金另計）
 function payoutFor(result, stake, odds) {
   stake = Number(stake) || 0;
@@ -155,10 +166,17 @@ function classifyBet(rawText) {
   return { period, market: '其他', selection: null, line: null, line_type: null };
 }
 
+// 只有讓分、大小支援 inverse；其他盤口忽略（獨贏/波膽/單雙/角球本身無鏡像意義）
+const MIRROR_MARKETS = new Set(['讓分', '大小']);
+
 function settleBet(bet, score, ctx = {}) {
+  const { inverse = false } = ctx;
   const m = MARKETS[bet.market];
   if (!m || !m.settle) return RESULT.MANUAL;
-  try { return m.settle(bet, score, ctx); } catch (e) { return RESULT.MANUAL; }
+  try {
+    const result = m.settle(bet, score, ctx);
+    return (inverse && MIRROR_MARKETS.has(bet.market)) ? mirrorResult(result) : result;
+  } catch (e) { return RESULT.MANUAL; }
 }
 
-module.exports = { MARKETS, MARKET_ORDER, classifyBet, settleBet, payoutFor, RESULT };
+module.exports = { MARKETS, MARKET_ORDER, classifyBet, settleBet, payoutFor, mirrorResult, RESULT };
