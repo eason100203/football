@@ -7,10 +7,13 @@ const describeIfKey = API_KEY ? describe : describe.skip;
 
 describeIfKey('API-Football 整合測試', () => {
   // 已知 fixture ids（測試前已手動驗證）
-  const USA_PY_ID   = 1489370; // USA vs Paraguay 2026-06-13 01:00 UTC
-  const CAN_BIH_ID  = 1539000; // Canada vs Bosnia & Herzegovina 2026-06-12 19:00 UTC
+  const USA_PY_ID   = 1489370; // USA vs Paraguay       API 2026-06-13
+  const CAN_BIH_ID  = 1539000; // Canada vs Bosnia&Her  API 2026-06-12 19:00 UTC
+  const AUS_TUR_ID  = 1539001; // Australia vs Türkiye  API 2026-06-14（DB 存 Turkey）
+  const BRA_MOR_ID  = 1489371; // Brazil vs Morocco     API 2026-06-13，DB 存 2026-06-14
+  const GER_CUR_ID  = 1489374; // Germany vs Curaçao    API 2026-06-14，DB 存 2026-06-15
 
-  describe('getFixtureId', () => {
+  describe('getFixtureId — 基本', () => {
     test('USA vs Paraguay → fixture 1489370', async () => {
       const result = await getFixtureId({
         apiKey:    API_KEY,
@@ -32,6 +35,41 @@ describeIfKey('API-Football 整合測試', () => {
       expect(result).not.toBeNull();
       expect(result.fixtureId).toBe(CAN_BIH_ID);
     }, 15000);
+  });
+
+  describe('getFixtureId — Türkiye alias + D-1 date fallback', () => {
+    test('Australia vs Turkey（DB 名）→ alias 命中 API 的 Türkiye', async () => {
+      const result = await getFixtureId({
+        apiKey:   API_KEY,
+        homeTeam: 'Australia',
+        awayTeam: 'Turkey',
+        date:     '2026-06-14'
+      });
+      expect(result).not.toBeNull();
+      expect(result.fixtureId).toBe(AUS_TUR_ID);
+    }, 15000);
+
+    test('Brazil vs Morocco DB=2026-06-14 → D-1 fallback 找到 API 2026-06-13 fixture', async () => {
+      const result = await getFixtureId({
+        apiKey:   API_KEY,
+        homeTeam: 'Brazil',
+        awayTeam: 'Morocco',
+        date:     '2026-06-14'  // DB 存的 UTC 日期；API 存 2026-06-13（美東時間）
+      });
+      expect(result).not.toBeNull();
+      expect(result.fixtureId).toBe(BRA_MOR_ID);
+    }, 20000); // 最多 2 次 API call
+
+    test('Germany vs Curaçao DB=2026-06-15 → D-1 fallback 找到 API 2026-06-14 fixture', async () => {
+      const result = await getFixtureId({
+        apiKey:   API_KEY,
+        homeTeam: 'Germany',
+        awayTeam: 'Curaçao',
+        date:     '2026-06-15'  // DB 存的 UTC 日期；API 存 2026-06-14
+      });
+      expect(result).not.toBeNull();
+      expect(result.fixtureId).toBe(GER_CUR_ID);
+    }, 20000);
   });
 
   describe('getHandicapGiver', () => {
