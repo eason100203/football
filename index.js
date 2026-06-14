@@ -8,8 +8,11 @@ const FormData = require('form-data');
 const dayjs = require('dayjs'); 
 const app = express();
 const { getTeamNameZh, TEAM_NAMES_ZH } = require('./teamName.js');
-const { classifyBet } = require('./betRules.js');
-const STRUCTURED_BET_KEYS = ['period', 'market', 'selection', 'line', 'line_type', 'result', 'payout'];
+const { classifyBet, settleBet, payoutFor, RESULT } = require('./betRules.js');
+const { getScores } = require('./apiFootball');
+const { syncHandicap } = require('./scripts/sync-handicap');
+const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
+const STRUCTURED_BET_KEYS = ['period', 'market', 'selection', 'line', 'line_type', 'result', 'payout', 'inverse'];
 // 寫入 bets；若結構化欄位尚未建立（migration 未跑），自動降級相容模式，確保下注不中斷
 async function insertBets(payloads) {
   let { error } = await supabase.from('bets').insert(payloads);
@@ -48,6 +51,15 @@ function parseNormalBetLine(row) {
   const condition = rest.join(' '); // 保留隊名在條件裡，維持原本顯示
 
   return { team, condition, amount, odds };
+}
+
+// 計算 inverse：讓分盤口，若使用者押受讓方（非讓球方）則需鏡像結算
+// homeTeamZh: 主隊中文名；homeIsGiver: true=主讓, false=客讓, null=未知
+function calcInverse(cls, homeTeamZh, homeIsGiver) {
+  if (cls.market !== '讓分') return false;
+  if (homeIsGiver == null) return null;
+  const selectionIsHome = cls.selection === homeTeamZh;
+  return homeIsGiver ? !selectionIsHome : selectionIsHome;
 }
 
 // 產生 CSV 字串（含 UTF-8 BOM，讓 Excel 正確顯示中文）
@@ -1142,6 +1154,205 @@ if (!isGroup && user.is_admin && text.startsWith('查看會員 ')) {
   });
 }
 
+if (!isGroup && user.is_admin && text === '同步盤口方向') {
+  if (!API_FOOTBALL_KEY) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 請先在 .env 設定 API_FOOTBALL_KEY'
+    });
+  }
+
+  try {
+    const { scanned, success, neutral, failed, failedLabels } = await syncHandicap({
+      supabase,
+      apiKey: API_FOOTBALL_KEY
+    });
+
+    if (scanned === 0) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '✅ 所有場次已有盤口方向，無需同步'
+      });
+    }
+
+    const lines = [
+      '盤口方向同步完成：',
+      `- 掃描場次：${scanned} 場`,
+      `- 成功回填：${success} 場`,
+      `- 平水盤（無讓球）：${neutral} 場`,
+      `- 查無 / 失敗：${failed} 場`,
+    ];
+    if (failedLabels.length) lines.push(`  (${failedLabels.join('、')})`);
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: lines.join('\n')
+    });
+  } catch (err) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 同步失敗：${err.message}`
+    });
+  }
+}
+
+// ── 結算（admin）
+if (!isGroup && user.is_admin && text === '結算') {
+  if (!API_FOOTBALL_KEY) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 請先在 .env 設定 API_FOOTBALL_KEY'
+    });
+  }
+
+  const todayTW = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD');
+  const rangeStart = `${todayTW} 00:00`;
+  const rangeEnd   = `${todayTW} 23:59`;
+
+  const { data: settleMatches, error: smErr } = await supabase
+    .from('matches')
+    .select('id, seq_no, home_team_name, away_team_name, api_football_fixture_id, home_is_giver, status')
+    .eq('status', 'FINISHED')
+    .is('settled_at', null)
+    .gte('match_date', rangeStart)
+    .lte('match_date', rangeEnd)
+    .order('seq_no', { ascending: true });
+
+  if (smErr) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `❌ 查詢失敗：${smErr.message}`
+    });
+  }
+
+  if (!settleMatches?.length) {
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: `✅ 今日（${todayTW}）無可結算場次（狀態需為 FINISHED 且未結算）`
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  let settledMatchCount = 0, skippedMatchCount = 0;
+  let autoCount = 0, manualCount = 0;
+  const memberPayouts = {}; // user_name → 淨輸贏
+
+  for (const match of settleMatches) {
+    const label = `#${match.seq_no} ${getTeamNameZh(match.home_team_name)} vs ${getTeamNameZh(match.away_team_name)}`;
+
+    if (!match.api_football_fixture_id) {
+      skippedMatchCount++;
+      console.warn(`[結算] 跳過（無 fixture_id）: ${label}`);
+      continue;
+    }
+
+    const scores = await getScores({ apiKey: API_FOOTBALL_KEY, fixtureId: match.api_football_fixture_id });
+
+    if (!scores || scores.fullTime.home == null || scores.fullTime.away == null) {
+      skippedMatchCount++;
+      console.warn(`[結算] 跳過（比分未知，可能比賽剛結束）: ${label}`);
+      continue;
+    }
+
+    // 寫入比分
+    await supabase.from('matches').update({
+      score_full: { home: scores.fullTime.home, away: scores.fullTime.away },
+      score_half: scores.halfTime.home != null
+        ? { home: scores.halfTime.home, away: scores.halfTime.away }
+        : null
+    }).eq('id', match.id);
+
+    // 撈該場未結算注單
+    const { data: unsettledBets, error: betsErr } = await supabase
+      .from('bets')
+      .select('id, ticket_id, user_name, market, selection, line, line_type, period, inverse, amount, odds')
+      .eq('match_id', match.id)
+      .is('result', null);
+
+    if (betsErr) {
+      console.warn(`[結算] 撈注單失敗 ${label}:`, betsErr.message);
+      continue;
+    }
+
+    const homeTeamZh = getTeamNameZh(match.home_team_name);
+    const awayTeamZh = getTeamNameZh(match.away_team_name);
+    const fullScore  = { home: scores.fullTime.home,  away: scores.fullTime.away };
+    const halfScore  = scores.halfTime.home != null
+      ? { home: scores.halfTime.home, away: scores.halfTime.away }
+      : null;
+
+    for (const bet of (unsettledBets || [])) {
+      // 串關：標人工，TODO: 待實作串關結算邏輯
+      if (bet.ticket_id?.startsWith('P')) {
+        console.log(`[結算] 串關標人工 (TODO): ticket=${bet.ticket_id}`);
+        await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
+        manualCount++;
+        continue;
+      }
+
+      // 半場注單：半場比分不存在時標人工
+      const score = bet.period === '半場' ? halfScore : fullScore;
+      if (!score) {
+        await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
+        manualCount++;
+        continue;
+      }
+
+      const result = settleBet(bet, score, {
+        homeTeamZh,
+        awayTeamZh,
+        inverse: bet.inverse ?? false
+      });
+
+      if (result === RESULT.MANUAL || result === RESULT.PENDING) {
+        await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
+        manualCount++;
+      } else {
+        const payout = payoutFor(result, bet.amount, bet.odds);
+        await supabase.from('bets').update({ result, payout: payout ?? 0 }).eq('id', bet.id);
+        autoCount++;
+        if (payout != null) {
+          const name = bet.user_name || '未知';
+          memberPayouts[name] = (memberPayouts[name] || 0) + payout;
+        }
+      }
+    }
+
+    // 標記場次已結算
+    await supabase.from('matches').update({ settled_at: nowIso }).eq('id', match.id);
+    settledMatchCount++;
+  }
+
+  // 回報訊息
+  const totalBets = autoCount + manualCount;
+  const replyLines = [
+    `✅ 結算完成（${todayTW}）`,
+    `- 結算場次：${settledMatchCount} 場`,
+    `- 結算筆數：${totalBets} 筆（自動 ${autoCount}、人工 ${manualCount}）`,
+  ];
+  if (skippedMatchCount > 0) {
+    replyLines.push(`- 跳過場次：${skippedMatchCount} 場（無 fixture_id 或比分未知）`);
+  }
+
+  const memberEntries = Object.entries(memberPayouts).sort((a, b) => b[1] - a[1]);
+  if (memberEntries.length > 0) {
+    replyLines.push('');
+    replyLines.push(`📊 會員輸贏總表（${todayTW}）`);
+    let grandTotal = 0;
+    for (const [name, p] of memberEntries) {
+      replyLines.push(`${name}  ${p >= 0 ? '+' : ''}${p.toLocaleString()}`);
+      grandTotal += p;
+    }
+    replyLines.push('----------------');
+    replyLines.push(`合計   ${grandTotal >= 0 ? '+' : ''}${grandTotal.toLocaleString()}`);
+  }
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: replyLines.join('\n')
+  });
+}
+
 if (!isGroup && text === '確認') {
   const state = userState[userId];
 
@@ -1216,7 +1427,7 @@ if (!isGroup && text.startsWith('修改下注#')) {
 
   const { data: existingBets, error: fetchError } = await supabase
     .from('bets')
-    .select('id, user_id, user_name, created_by, condition, amount, ticket_id')
+    .select('id, user_id, user_name, created_by, condition, amount, ticket_id, match_id')
     .eq('ticket_id', ticketId)
     .order('id', { ascending: true });
 
@@ -1305,6 +1516,20 @@ if (!isGroup && text.startsWith('修改下注#')) {
   // ── 普通下注：維持原本一行一筆，跟下注#一樣解析所有欄位，且不可新增/刪除
 const oldBets = existingBets;
 
+// 取主隊 home_is_giver 以便重算 inverse
+let editMatch = null;
+{
+  const matchId = oldBets[0]?.match_id;
+  if (matchId) {
+    const { data: m } = await supabase
+      .from('matches')
+      .select('home_team_name, home_is_giver')
+      .eq('id', matchId)
+      .single();
+    editMatch = m;
+  }
+}
+
 if (betLines.length !== oldBets.length) {
   return client.replyMessage(event.replyToken, {
     type: 'text',
@@ -1347,6 +1572,9 @@ if (updateErrors.length > 0) {
 let updateCount = 0;
 for (let i = 0; i < parsedRows.length; i++) {
   const { team, condition, amount, odds, cls } = parsedRows[i];
+  const inverse = editMatch
+    ? calcInverse(cls, getTeamNameZh(editMatch.home_team_name), editMatch.home_is_giver)
+    : null;
 
   const { error } = await supabase
     .from('bets')
@@ -1359,7 +1587,8 @@ for (let i = 0; i < parsedRows.length; i++) {
       market: cls.market,
       selection: cls.selection,
       line: cls.line,
-      line_type: cls.line_type
+      line_type: cls.line_type,
+      inverse
     })
     .eq('id', oldBets[i].id);
 
@@ -1585,7 +1814,7 @@ if (!seqNo || betLines.length === 0) {
 
   const { data: match, error: matchError } = await supabase
     .from('matches')
-    .select('id, seq_no, label, match_date, status, home_team_name, away_team_name')
+    .select('id, seq_no, label, match_date, status, home_team_name, away_team_name, home_is_giver')
     .eq('seq_no', seqNo)
     .single();
 
@@ -1625,7 +1854,8 @@ if (!hasChinese) {
 }
     
     const cls = classifyBet(condition);
-   const ticketId ='T' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    const inverse = calcInverse(cls, getTeamNameZh(match.home_team_name), match.home_is_giver);
+    const ticketId = 'T' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
     parsedBets.push({
       display: {
@@ -1652,6 +1882,7 @@ if (!hasChinese) {
         selection: cls.selection,
         line: cls.line,
         line_type: cls.line_type,
+        inverse,
         ticket_id: ticketId
       }
     });
@@ -1711,7 +1942,7 @@ if (!isGroup && text.trim() === '下注') {
 
   const { data: matches, error } = await supabase
     .from('matches')
-    .select('id, seq_no, home_team_name, away_team_name, match_date, status')
+    .select('id, seq_no, home_team_name, away_team_name, match_date, status, home_is_giver')
     .gte('match_date', start)
     .lte('match_date', end)
     .order('seq_no', { ascending: true });
@@ -1729,7 +1960,8 @@ if (!isGroup && text.trim() === '下注') {
       id: m.id,
       seq_no: m.seq_no,
       home: getTeamNameZh(m.home_team_name) || 'TBD',
-      away: getTeamNameZh(m.away_team_name) || 'TBD'
+      away: getTeamNameZh(m.away_team_name) || 'TBD',
+      home_is_giver: m.home_is_giver
     }))
   };
 
@@ -1791,6 +2023,8 @@ if (!isGroup && /賽事\d+/.test(text) && /第[一二三四五六七八九十]+�
         continue;
       }
 
+      const cls = classifyBet(condition);
+      const inverse = calcInverse(cls, matchInfo.home, matchInfo.home_is_giver);
       const ticketId = 'T' + Math.random().toString(36).substring(2, 10).toUpperCase();
 
       parsedBets.push({
@@ -1814,6 +2048,12 @@ if (!isGroup && /賽事\d+/.test(text) && /第[一二三四五六七八九十]+�
           condition,
           amount,
           odds,
+          period: cls.period,
+          market: cls.market,
+          selection: cls.selection,
+          line: cls.line,
+          line_type: cls.line_type,
+          inverse,
           ticket_id: ticketId
         }
       });
@@ -1865,7 +2105,7 @@ if (!isGroup && /賽事\d+/.test(text) && /第[一二三四五六七八九十]+�
   // 預設回覆
   return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 刪除下注#<票號>\n• 匯出資料'
+    text: '⚽ 可用指令：\n\n(一般使用者)\n• 賽事列表\n• 賽事分析\n• 小組排行\n• 我的下注紀錄\n• 操作手冊 \n\n(管理員專用)\n• 賽事下注紀錄\n• 查看會員\n• 修改下注#<票號>\n• 刪除下注#<票號>\n• 同步盤口方向\n• 結算\n• 匯出資料'
   });
 }
 //#endregion
