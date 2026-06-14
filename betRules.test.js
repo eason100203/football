@@ -1,4 +1,4 @@
-const { classifyBet, settleBet, mirrorResult, RESULT } = require('./betRules');
+const { classifyBet, settleBet, mirrorResult, legMultiplier, RESULT } = require('./betRules');
 
 // 共用 ctx：日本主場 vs 巴西客場
 const CTX = { homeTeamZh: '日本', awayTeamZh: '巴西' };
@@ -194,9 +194,91 @@ describe('inverse handicap settling', () => {
     expect(settleBet(bet, score, { ...CTX, inverse: true })).toBe(RESULT.WON);
   });
 
-  test('大1.5 大球 total=2：win → lose（下小球邊）', () => {
-    const bet = { market: '大小', selection: '大', line: 1.5, line_type: '.5' };
-    expect(settleBet(bet, { home: 2, away: 0 }, { inverse: false })).toBe(RESULT.WON);
-    expect(settleBet(bet, { home: 2, away: 0 }, { inverse: true })).toBe(RESULT.LOST);
+  test('大小 selection 自行處理大小邊：大1.5 WON、小1.5 LOST', () => {
+    const score = { home: 2, away: 0 };
+    expect(settleBet({ market: '大小', selection: '大', line: 1.5, line_type: '.5' }, score)).toBe(RESULT.WON);
+    expect(settleBet({ market: '大小', selection: '小', line: 1.5, line_type: '.5' }, score)).toBe(RESULT.LOST);
+  });
+});
+
+// ─── 新增：大小 +50/-50 settling（8 條）────────────────────────────────────────
+
+describe('大小 +50/-50 settling', () => {
+  // 下大球 —— -50 (X.25 線)
+  test('大 2-50, total=3 → WON', () => {
+    const bet = { market: '大小', selection: '大', line: 2, line_type: '-50' };
+    expect(settleBet(bet, { home: 1, away: 2 })).toBe(RESULT.WON);
+  });
+  test('大 2-50, total=2 → HALF_LOST', () => {
+    const bet = { market: '大小', selection: '大', line: 2, line_type: '-50' };
+    expect(settleBet(bet, { home: 1, away: 1 })).toBe(RESULT.HALF_LOST);
+  });
+  test('大 2-50, total=1 → LOST', () => {
+    const bet = { market: '大小', selection: '大', line: 2, line_type: '-50' };
+    expect(settleBet(bet, { home: 1, away: 0 })).toBe(RESULT.LOST);
+  });
+
+  // 下大球 —— +50 (X-0.25 線)
+  test('大 3+50, total=4 → WON', () => {
+    const bet = { market: '大小', selection: '大', line: 3, line_type: '+50' };
+    expect(settleBet(bet, { home: 2, away: 2 })).toBe(RESULT.WON);
+  });
+  test('大 3+50, total=3 → HALF_WON', () => {
+    const bet = { market: '大小', selection: '大', line: 3, line_type: '+50' };
+    expect(settleBet(bet, { home: 1, away: 2 })).toBe(RESULT.HALF_WON);
+  });
+  test('大 3+50, total=2 → LOST', () => {
+    const bet = { market: '大小', selection: '大', line: 3, line_type: '+50' };
+    expect(settleBet(bet, { home: 1, away: 1 })).toBe(RESULT.LOST);
+  });
+
+  // 下小球 —— selection='小' 直接處理（不走 inverse）
+  test('小 2-50, total=2 → HALF_WON', () => {
+    const bet = { market: '大小', selection: '小', line: 2, line_type: '-50' };
+    expect(settleBet(bet, { home: 1, away: 1 })).toBe(RESULT.HALF_WON);
+  });
+  test('小 3+50, total=3 → HALF_LOST', () => {
+    const bet = { market: '大小', selection: '小', line: 3, line_type: '+50' };
+    expect(settleBet(bet, { home: 1, away: 2 })).toBe(RESULT.HALF_LOST);
+  });
+});
+
+// ─── 新增：串關 legMultiplier（6 條）─────────────────────────────────────────
+
+describe('parlay legMultiplier', () => {
+  test('WON odds=0.8 → 1.8', () => {
+    expect(legMultiplier(RESULT.WON, 0.8)).toBeCloseTo(1.8);
+  });
+
+  test('HALF_WON odds=1.0 → 1.5', () => {
+    expect(legMultiplier(RESULT.HALF_WON, 1.0)).toBeCloseTo(1.5);
+  });
+
+  test('PUSH odds=0.9 → 1（odds 無影響）', () => {
+    expect(legMultiplier(RESULT.PUSH, 0.9)).toBe(1);
+  });
+
+  test('HALF_LOST odds=1.0 → 0.5', () => {
+    expect(legMultiplier(RESULT.HALF_LOST, 1.0)).toBe(0.5);
+  });
+
+  test('LOST odds=0.9 → 0', () => {
+    expect(legMultiplier(RESULT.LOST, 0.9)).toBe(0);
+  });
+
+  test('MANUAL → null（觸發人工）', () => {
+    expect(legMultiplier(RESULT.MANUAL, 1.0)).toBeNull();
+  });
+
+  test('三 leg 全 WON 0.8×1.0×0.5 → combined ≈ 5.4', () => {
+    const combined = legMultiplier(RESULT.WON, 0.8)
+                   * legMultiplier(RESULT.WON, 1.0)
+                   * legMultiplier(RESULT.WON, 0.5);
+    expect(combined).toBeCloseTo(5.4);
+  });
+
+  test('WON + LOST → combined = 0', () => {
+    const combined = legMultiplier(RESULT.WON, 0.9) * legMultiplier(RESULT.LOST, 0.8);
+    expect(combined).toBe(0);
   });
 });

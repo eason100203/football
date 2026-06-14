@@ -113,6 +113,18 @@ const MARKETS = {
         if (total === bet.line) return RESULT.PUSH;
         return ((total > bet.line) === big) ? RESULT.WON : RESULT.LOST;
       }
+      if (bet.line_type === '-50') {
+        const X = bet.line;
+        if (total >= X + 1) return big ? RESULT.WON      : RESULT.LOST;
+        if (total === X)    return big ? RESULT.HALF_LOST : RESULT.HALF_WON;
+        return                     big ? RESULT.LOST      : RESULT.WON;
+      }
+      if (bet.line_type === '+50') {
+        const X = bet.line;
+        if (total >= X + 1) return big ? RESULT.WON      : RESULT.LOST;
+        if (total === X)    return big ? RESULT.HALF_WON  : RESULT.HALF_LOST;
+        return                     big ? RESULT.LOST      : RESULT.WON;
+      }
       return RESULT.MANUAL;
     },
   },
@@ -166,8 +178,8 @@ function classifyBet(rawText) {
   return { period, market: '其他', selection: null, line: null, line_type: null };
 }
 
-// 只有讓分、大小支援 inverse；其他盤口忽略（獨贏/波膽/單雙/角球本身無鏡像意義）
-const MIRROR_MARKETS = new Set(['讓分', '大小']);
+// 大小盤 settle 內部已依 selection 自行處理大小兩邊，不再走 mirror 路徑
+const MIRROR_MARKETS = new Set(['讓分']);
 
 function settleBet(bet, score, ctx = {}) {
   const { inverse = false } = ctx;
@@ -179,4 +191,16 @@ function settleBet(bet, score, ctx = {}) {
   } catch (e) { return RESULT.MANUAL; }
 }
 
-module.exports = { MARKETS, MARKET_ORDER, classifyBet, settleBet, payoutFor, mirrorResult, RESULT };
+// 串關 leg 乘數：WON=1+odds, HALF_WON=1+odds/2, PUSH=1, HALF_LOST=0.5, LOST=0, 其他→null
+function legMultiplier(result, odds) {
+  switch (result) {
+    case RESULT.WON:       return 1 + odds;
+    case RESULT.HALF_WON:  return 1 + odds / 2;
+    case RESULT.PUSH:      return 1;
+    case RESULT.HALF_LOST: return 0.5;
+    case RESULT.LOST:      return 0;
+    default:               return null;
+  }
+}
+
+module.exports = { MARKETS, MARKET_ORDER, classifyBet, settleBet, legMultiplier, payoutFor, mirrorResult, RESULT };
