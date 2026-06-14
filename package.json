@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --forceExit"
   },
   "dependencies": {
     "@line/bot-sdk": "^7.7.0",
@@ -28,5 +28,8 @@
   "bugs": {
     "url": "https://github.com/eason100203/football/issues"
   },
-  "homepage": "https://github.com/eason100203/football#readme"
+  "homepage": "https://github.com/eason100203/football#readme",
+  "devDependencies": {
+    "jest": "^30.4.2"
+  }
 }
