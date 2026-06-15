@@ -50,11 +50,11 @@ function payoutFor(result, stake, odds) {
   }
 }
 
-// 抓開頭的「半場 / 半」→ 時段
+// 抓開頭的「上半場 / 上半 / 半場 / 半」→ 時段（alternation 長的在前，取最左最長匹配）
 function stripPeriod(text) {
   let period = '全場';
   let t = String(text || '').trim();
-  const m = t.match(/^(半場|半)\s*/);
+  const m = t.match(/^(上半場|上半|半場|半)\s*/);
   if (m) { period = '半場'; t = t.slice(m[0].length).trim(); }
   return { period, text: t };
 }

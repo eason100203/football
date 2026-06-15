@@ -42,6 +42,30 @@ describe('classifyBet', () => {
     expect(r.market).toBe('讓分');
   });
 
+  test('上半場 大 2+50 → period 半場、market 大小', () => {
+    const r = classifyBet('上半場 大 2+50');
+    expect(r.period).toBe('半場');
+    expect(r.market).toBe('大小');
+  });
+
+  test('上半 美國 0-50 → period 半場、market 讓分', () => {
+    const r = classifyBet('上半 美國 0-50');
+    expect(r.period).toBe('半場');
+    expect(r.market).toBe('讓分');
+  });
+
+  test('半場 大 2+50 → period 半場（既有前綴保留）', () => {
+    const r = classifyBet('半場 大 2+50');
+    expect(r.period).toBe('半場');
+    expect(r.market).toBe('大小');
+  });
+
+  test('半 美國 0-50 → period 半場（既有前綴保留）', () => {
+    const r = classifyBet('半 美國 0-50');
+    expect(r.period).toBe('半場');
+    expect(r.market).toBe('讓分');
+  });
+
   test('大1.5 → 大小 大 line=1.5 .5', () => {
     const r = classifyBet('大1.5');
     expect(r.market).toBe('大小');
