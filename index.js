@@ -148,7 +148,7 @@ async function uploadCsvAndSign(csvString, filename) {
   return data.signedUrl;
 }
 
-// 上傳任意 Buffer（如 .xls）到 Supabase Storage 並回傳 1 小時簽名連結
+// 上傳任意 Buffer（如 .xlsx）到 Supabase Storage 並回傳 1 小時簽名連結
 async function uploadBufferAndSign(buffer, filename, contentType) {
   const bucket = 'exports';
   const path = `bets/${filename}`;
@@ -314,8 +314,11 @@ if (typeof userState[userId]?.type === 'string' && userState[userId].type.starts
           type: 'text', text: '❌ 此篩選條件下沒有任何下注紀錄'
         });
       }
-      const fname = `bets_pivot_${dayjs().format('YYYYMMDD_HHmmss')}.xls`;
-      const url = await uploadBufferAndSign(buffer, fname, 'application/vnd.ms-excel');
+      const fname = `bets_pivot_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`;
+      const url = await uploadBufferAndSign(
+        buffer, fname,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: `✅ 匯出完成（${members.length} 位會員）\n\n下載連結（1 小時內有效）：\n${url}`

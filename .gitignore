@@ -3,3 +3,4 @@
 .local-tools/
 *.log
 node_modules/
+sample_pivot.xlsx
