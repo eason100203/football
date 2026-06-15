@@ -72,6 +72,18 @@ describe('classifyBet', () => {
     expect(r.selection).toBe('2:1');
   });
 
+  test('德國 3:0 → 波膽 selection=3:0', () => {
+    const r = classifyBet('德國 3:0');
+    expect(r.market).toBe('波膽');
+    expect(r.selection).toBe('3:0');
+  });
+
+  test('德國 4：1 → 波膽 selection=4:1（全形冒號）', () => {
+    const r = classifyBet('德國 4：1');
+    expect(r.market).toBe('波膽');
+    expect(r.selection).toBe('4:1');
+  });
+
   test('單 → 單雙', () => {
     expect(classifyBet('單').market).toBe('單雙');
     expect(classifyBet('單').selection).toBe('單');
@@ -422,5 +434,82 @@ describe('settleBet 讓分 半盤 .5', () => {
   test('讓2.5 home 1-0（margin=1 < 2.5）→ LOST', () => {
     const bet = { market: '讓分', selection: '日本', line: 2.5, line_type: '.5' };
     expect(settleBet(bet, { home: 1, away: 0 }, CTX)).toBe(RESULT.LOST);
+  });
+});
+
+// ─── 擴充：大小 false positive 防護（6 條）──────────────────────────────────
+
+describe('classifyBet 大小 — 隊名含大字不誤判', () => {
+  test('加拿大 0.5 → 讓分（不是大小）', () => {
+    const r = classifyBet('加拿大 0.5');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('加拿大');
+  });
+
+  test('義大利 1+50 → 讓分（不是大小）', () => {
+    const r = classifyBet('義大利 1+50');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('義大利');
+  });
+
+  test('哥斯大黎加 1 → 讓分（不是大小）', () => {
+    const r = classifyBet('哥斯大黎加 1');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('哥斯大黎加');
+  });
+
+  test('加拿大 大1.5 → 大小（隊名後接明確大小盤）', () => {
+    const r = classifyBet('加拿大 大1.5');
+    expect(r.market).toBe('大小');
+    expect(r.selection).toBe('大');
+    expect(r.line).toBe(1.5);
+  });
+
+  test('美國 大1.5 → 大小', () => {
+    const r = classifyBet('美國 大1.5');
+    expect(r.market).toBe('大小');
+    expect(r.selection).toBe('大');
+  });
+
+  test('2-50大 → 大小（既有格式不壞）', () => {
+    const r = classifyBet('2-50大');
+    expect(r.market).toBe('大小');
+    expect(r.selection).toBe('大');
+    expect(r.line).toBe(2);
+    expect(r.line_type).toBe('-50');
+  });
+});
+
+// ─── 擴充：firstTeam 無空格識別（2 條）──────────────────────────────────────
+
+describe('classifyBet 讓分 — 無空格輸入', () => {
+  test('瑞士2+50 → 讓分（中文隊名緊接數字）', () => {
+    const r = classifyBet('瑞士2+50');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('瑞士');
+    expect(r.line).toBe(2);
+    expect(r.line_type).toBe('+50');
+  });
+
+  test('美國0.5 → 讓分（中文隊名緊接小數）', () => {
+    const r = classifyBet('美國0.5');
+    expect(r.market).toBe('讓分');
+    expect(r.selection).toBe('美國');
+    expect(r.line).toBe(0.5);
+    expect(r.line_type).toBe('.5');
+  });
+});
+
+// ─── 擴充：波膽 settle（2 條）─────────────────────────────────────────────────
+
+describe('settleBet 波膽', () => {
+  test('selection=2:1 score 2:1 → WON', () => {
+    const bet = { market: '波膽', selection: '2:1' };
+    expect(settleBet(bet, { home: 2, away: 1 })).toBe(RESULT.WON);
+  });
+
+  test('selection=2:1 score 1:0 → LOST', () => {
+    const bet = { market: '波膽', selection: '2:1' };
+    expect(settleBet(bet, { home: 1, away: 0 })).toBe(RESULT.LOST);
   });
 });

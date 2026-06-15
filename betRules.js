@@ -60,7 +60,9 @@ function stripPeriod(text) {
 }
 
 function firstTeam(t) {
-  for (const tok of String(t).split(/\s+/)) if (TEAM_SET.has(tok)) return tok;
+  // 先把「中文字緊接數字」的情況補空格（例如「瑞士2+50」→「瑞士 2+50」）
+  const normalized = String(t).replace(/([一-鿿])(\d)/g, '$1 $2');
+  for (const tok of normalized.split(/\s+/)) if (TEAM_SET.has(tok)) return tok;
   return null;
 }
 function hasTeam(t) { return firstTeam(t) != null; }
@@ -87,7 +89,12 @@ const MARKETS = {
     settle() { return RESULT.MANUAL; },
   },
   波膽: {
-    match(t) { return /^\d{1,2}\s*[:：]\s*\d{1,2}$/.test(t.trim()); },
+    match(t) {
+      const trimmed = t.trim();
+      if (/^\d{1,2}\s*[:：]\s*\d{1,2}$/.test(trimmed)) return true;
+      if (/\d{1,2}\s*[:：]\s*\d{1,2}\s*$/.test(trimmed)) return true;
+      return false;
+    },
     parse(t) {
       const m = t.match(/(\d{1,2})\s*[:：]\s*(\d{1,2})/);
       return { market: '波膽', selection: `${m[1]}:${m[2]}`, line: null, line_type: null };
@@ -99,7 +106,7 @@ const MARKETS = {
     },
   },
   大小: {
-    match(t) { return /(大|小)/.test(t) && /\d/.test(t); },
+    match(t) { return /(^|[^一-鿿])(大|小)/.test(t) && /\d/.test(t); },
     parse(t) {
       const side = /小/.test(t) ? '小' : '大';
       let line = null, line_type = null, m;

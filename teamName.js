@@ -55,8 +55,8 @@ const TEAM_NAMES_ZH = {
 
   // 亞洲
   "Japan": "日本",
-  "South Korea": "南韓",
-  "Korea Republic": "南韓",
+  "South Korea": "韓國",
+  "Korea Republic": "韓國",
   "Australia": "澳洲",
   "Iran": "伊朗",
   "Saudi Arabia": "沙烏地阿拉伯",
