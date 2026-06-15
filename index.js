@@ -11,6 +11,7 @@ const { getTeamNameZh, TEAM_NAMES_ZH } = require('./teamName.js');
 const { classifyBet, settleBet, payoutFor, RESULT } = require('./betRules.js');
 const { syncHandicap } = require('./scripts/sync-handicap');
 const { autoSettle } = require('./scripts/auto-settle');
+const { buildBetExportPivot } = require('./betExportPivot');
 const API_FOOTBALL_KEY = process.env.API_FOOTBALL_KEY;
 const STRUCTURED_BET_KEYS = ['period', 'market', 'selection', 'line', 'line_type', 'result', 'payout', 'inverse'];
 // 寫入 bets；若結構化欄位尚未建立（migration 未跑），自動降級相容模式，確保下注不中斷
@@ -146,6 +147,47 @@ async function uploadCsvAndSign(csvString, filename) {
 
   return data.signedUrl;
 }
+
+// 上傳任意 Buffer（如 .xls）到 Supabase Storage 並回傳 1 小時簽名連結
+async function uploadBufferAndSign(buffer, filename, contentType) {
+  const bucket = 'exports';
+  const path = `bets/${filename}`;
+
+  const { error: upErr } = await supabase
+    .storage
+    .from(bucket)
+    .upload(path, buffer, { contentType, upsert: true });
+  if (upErr) throw new Error(`上傳失敗（請確認 Supabase 有名為 "${bucket}" 的 bucket）：${upErr.message}`);
+
+  const { data, error } = await supabase
+    .storage
+    .from(bucket)
+    .createSignedUrl(path, 60 * 60);
+  if (error) throw new Error(`產生下載連結失敗：${error.message}`);
+
+  return data.signedUrl;
+}
+
+// 解析匯出日期範圍：'all' | 'M/D' | 'M/D-M/D'，回傳 { start, end }（含時間）或 null
+function parseExportDateRange(input, year) {
+  const yr = year || 2026;
+  const t = String(input || '').trim().toLowerCase();
+  if (t === 'all' || t === '全部') {
+    return { start: `${yr}-01-01 00:00`, end: `${yr}-12-31 23:59` };
+  }
+  const toIso = (md) => {
+    const m = md.trim().match(/^(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+    if (!m) return null;
+    return `${yr}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
+  };
+  const parts = t.split(/[-~到]/).map(s => s.trim()).filter(Boolean);
+  if (parts.length === 1) {
+    const d = toIso(parts[0]);
+    return d ? { start: `${d} 00:00`, end: `${d} 23:59` } : null;
+  }
+  const d1 = toIso(parts[0]), d2 = toIso(parts[1]);
+  return (d1 && d2) ? { start: `${d1} 00:00`, end: `${d2} 23:59` } : null;
+}
 const OpenAI = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const utc = require('dayjs/plugin/utc');
@@ -246,36 +288,37 @@ if (typeof userState[userId]?.type === 'string' && userState[userId].type.starts
         type: 'text', text: '請輸入會員, 例如: 禿頭, 糯米 或 all, 輸入取消結束'
       });
     }
-    userState[userId] = { type: 'export_wait_match', members };
+    userState[userId] = { type: 'export_wait_daterange', members };
     return client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '請輸入場次, 例如1,2,3 或 all, 輸入取消結束'
+      text: '請輸入日期範圍, 例如 6/12-6/13 或 6/12 或 all, 輸入取消結束'
     });
   }
 
-  if (st.type === 'export_wait_match') {
-    const seqs = text.toLowerCase() === 'all'
-      ? 'all'
-      : text.split(/[,，、]/).map(s => Number(s.trim())).filter(n => Number.isFinite(n));
-    if (seqs !== 'all' && seqs.length === 0) {
+  if (st.type === 'export_wait_daterange') {
+    const dateRange = parseExportDateRange(text);
+    if (!dateRange) {
       return client.replyMessage(event.replyToken, {
-        type: 'text', text: '請輸入場次, 例如1,2,3 或 all, 輸入取消結束'
+        type: 'text', text: '日期格式錯誤，請輸入如 6/12-6/13 或 6/12 或 all, 輸入取消結束'
       });
     }
     delete userState[userId];
     try {
-      const rows = await buildBetExport(st.members, seqs);
-      if (!rows.length) {
+      const { buffer, rowCount, members } = await buildBetExportPivot({
+        supabase,
+        dateRange,
+        memberFilter: st.members,
+      });
+      if (rowCount <= 1) { // 只有 header
         return client.replyMessage(event.replyToken, {
           type: 'text', text: '❌ 此篩選條件下沒有任何下注紀錄'
         });
       }
-      const csv = toCsv(rows, EXPORT_HEADERS);
-      const fname = `bets_${dayjs().format('YYYYMMDD_HHmmss')}.csv`;
-      const url = await uploadCsvAndSign(csv, fname);
+      const fname = `bets_pivot_${dayjs().format('YYYYMMDD_HHmmss')}.xls`;
+      const url = await uploadBufferAndSign(buffer, fname, 'application/vnd.ms-excel');
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: `✅ 匯出完成，共 ${rows.length} 筆\n\n下載連結（1 小時內有效）：\n${url}`
+        text: `✅ 匯出完成（${members.length} 位會員）\n\n下載連結（1 小時內有效）：\n${url}`
       });
     } catch (e) {
       console.error('匯出失敗:', e.response?.data || e.message || e);
