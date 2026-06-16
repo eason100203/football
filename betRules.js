@@ -85,8 +85,27 @@ function handicapResult(margin, A, suffix) {
 const MARKETS = {
   角球: {
     match(t) { return /角(球)?/.test(t); },
-    parse(t) { return { market: '角球', selection: t.trim(), line: null, line_type: null }; },
-    settle() { return RESULT.MANUAL; },
+    // 角球盤目前支援「大小（over/under）」語法，沿用大小的 line 解析；
+    // 不含大/小（例如角球讓分）暫存原始文字、line 留空 → 結算回 manual
+    parse(t) {
+      if (!/大|小/.test(t)) return { market: '角球', selection: t.trim(), line: null, line_type: null };
+      const ou = MARKETS.大小.parse(t);
+      return { market: '角球', selection: ou.selection, line: ou.line, line_type: ou.line_type };
+    },
+    // 角球數由 ctx.corners 提供（賽後統計，僅全場）。total = 主+客角球數，
+    // 套用與大小完全相同的 over/under 結算邏輯。
+    settle(bet, score, ctx = {}) {
+      const corners = ctx.corners;
+      if (!corners || corners.home == null || corners.away == null) return RESULT.MANUAL;
+      if (bet.period === '半場') return RESULT.MANUAL; // API 無半場角球統計
+      let b = bet;
+      if (b.line == null && /大|小/.test(String(bet.selection || ''))) {
+        const ou = MARKETS.大小.parse(String(bet.selection)); // 舊資料 line 空 → 從原始文字回推
+        b = { ...bet, selection: ou.selection, line: ou.line, line_type: ou.line_type };
+      }
+      if (b.line == null) return RESULT.MANUAL;
+      return MARKETS.大小.settle({ ...b, market: '大小' }, { home: corners.home, away: corners.away }, ctx);
+    },
   },
   波膽: {
     match(t) {

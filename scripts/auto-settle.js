@@ -4,7 +4,7 @@ const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 const { classifyBet, settleBet, legMultiplier, payoutFor, RESULT } = require('../betRules.js');
-const { getScores } = require('../apiFootball');
+const { getScores, getCorners } = require('../apiFootball');
 const { getTeamNameZh } = require('../teamName.js');
 
 dayjs.extend(utc);
@@ -99,6 +99,15 @@ async function autoSettle({ supabase, apiKey }) {
       continue;
     }
 
+    // 有角球盤才撈角球統計（省 API 額度）
+    const hasCornerBet = (unsettledBets || []).some(b => b.market === '角球');
+    const corners = hasCornerBet
+      ? await getCorners({ apiKey, fixtureId: match.api_football_fixture_id })
+      : null;
+    if (hasCornerBet && !corners) {
+      console.warn(`[auto-settle] 角球統計未取得，角球盤將標人工: ${label}`);
+    }
+
     const homeTeamZh = getTeamNameZh(match.home_team_name);
     const awayTeamZh = getTeamNameZh(match.away_team_name);
     const fullScore  = { home: scores.fullTime.home,  away: scores.fullTime.away };
@@ -117,7 +126,8 @@ async function autoSettle({ supabase, apiKey }) {
       const result = settleBet(bet, score, {
         homeTeamZh,
         awayTeamZh,
-        inverse: bet.inverse ?? false
+        inverse: bet.inverse ?? false,
+        corners  // 角球盤用；其他盤口會忽略
       });
 
       if (result === RESULT.MANUAL || result === RESULT.PENDING) {

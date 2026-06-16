@@ -153,6 +153,40 @@ async function getHandicapGiver({ apiKey, fixtureId }) {
   }
 }
 
+/**
+ * 取整場角球數（賽後統計，/fixtures/statistics）。
+ * 角球大小盤只看總數，主/客對應順序不影響結算（total = home + away）。
+ * 統計尚未產生或無 Corner Kicks 欄位時回 null。
+ * @returns {{ home: number, away: number } | null}
+ */
+async function getCorners({ apiKey, fixtureId }) {
+  try {
+    const { data } = await axios.get(`${BASE_URL}/fixtures/statistics`, {
+      headers: makeHeaders(apiKey),
+      params: { fixture: fixtureId },
+      timeout: 8000
+    });
+
+    const teams = data.response || [];
+    if (teams.length < 2) return null; // 統計尚未產生
+
+    const cornerOf = (teamStats) => {
+      const s = (teamStats.statistics || []).find(x => x.type === 'Corner Kicks');
+      const v = s ? s.value : null;
+      return v == null ? null : Number(v);
+    };
+
+    const home = cornerOf(teams[0]);
+    const away = cornerOf(teams[1]);
+    if (home == null || away == null) return null;
+
+    return { home, away };
+  } catch (err) {
+    console.warn('[apiFootball] getCorners error:', err.message);
+    return null;
+  }
+}
+
 // API-Football 的 errors 欄位成功時為 []（陣列），出錯時為物件如 { access: '...' }
 function firstError(errors) {
   if (!errors) return null;
@@ -219,4 +253,4 @@ async function getApiStatus({ apiKey }) {
   }
 }
 
-module.exports = { getFixtureId, getScores, getHandicapGiver, getApiStatus };
+module.exports = { getFixtureId, getScores, getHandicapGiver, getApiStatus, getCorners };
