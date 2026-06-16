@@ -47,11 +47,12 @@ async function autoSettle({ supabase, apiKey }) {
   const rangeStart = `${todayTW} 00:00`;
   const rangeEnd   = `${todayTW} 23:59`;
 
+  // 不以 settled_at 為閘門：改以「該場是否還有未結算注單」決定要不要結，
+  // 否則賽後（settled_at 已設）才下的注單會永遠漏結。
   const { data: settleMatches, error: smErr } = await supabase
     .from('matches')
-    .select('id, seq_no, home_team_name, away_team_name, api_football_fixture_id, home_is_giver, status')
+    .select('id, seq_no, home_team_name, away_team_name, api_football_fixture_id, home_is_giver, status, score_full, score_half')
     .eq('status', 'FINISHED')
-    .is('settled_at', null)
     .gte('match_date', rangeStart)
     .lte('match_date', rangeEnd)
     .order('seq_no', { ascending: true });
@@ -67,27 +68,7 @@ async function autoSettle({ supabase, apiKey }) {
   for (const match of settleMatches) {
     const label = `#${match.seq_no} ${getTeamNameZh(match.home_team_name)} vs ${getTeamNameZh(match.away_team_name)}`;
 
-    if (!match.api_football_fixture_id) {
-      skippedMatchCount++;
-      console.warn(`[auto-settle] 跳過（無 fixture_id）: ${label}`);
-      continue;
-    }
-
-    const scores = await getScores({ apiKey, fixtureId: match.api_football_fixture_id });
-
-    if (!scores || scores.fullTime.home == null || scores.fullTime.away == null) {
-      skippedMatchCount++;
-      console.warn(`[auto-settle] 跳過（比分未知）: ${label}`);
-      continue;
-    }
-
-    await supabase.from('matches').update({
-      score_full: { home: scores.fullTime.home, away: scores.fullTime.away },
-      score_half: scores.halfTime.home != null
-        ? { home: scores.halfTime.home, away: scores.halfTime.away }
-        : null
-    }).eq('id', match.id);
-
+    // 先撈未結算注單；沒有待結就直接跳過（不花 API 額度，也不重碰已結算場次）
     const { data: unsettledBets, error: betsErr } = await supabase
       .from('bets')
       .select('id, user_name, market, selection, line, line_type, period, inverse, amount, odds')
@@ -98,9 +79,33 @@ async function autoSettle({ supabase, apiKey }) {
       console.warn(`[auto-settle] 撈注單失敗 ${label}:`, betsErr.message);
       continue;
     }
+    if (!unsettledBets || unsettledBets.length === 0) continue;
+
+    if (!match.api_football_fixture_id) {
+      skippedMatchCount++;
+      console.warn(`[auto-settle] 跳過（無 fixture_id）: ${label}`);
+      continue;
+    }
+
+    // 比分：已存過就重用，沒有才打 API（省額度；補結晚到注單時通常已有比分）
+    let fullScore = match.score_full || null;
+    let halfScore = match.score_half || null;
+    if (!fullScore) {
+      const scores = await getScores({ apiKey, fixtureId: match.api_football_fixture_id });
+      if (!scores || scores.fullTime.home == null || scores.fullTime.away == null) {
+        skippedMatchCount++;
+        console.warn(`[auto-settle] 跳過（比分未知）: ${label}`);
+        continue;
+      }
+      fullScore = { home: scores.fullTime.home, away: scores.fullTime.away };
+      halfScore = scores.halfTime.home != null
+        ? { home: scores.halfTime.home, away: scores.halfTime.away }
+        : null;
+      await supabase.from('matches').update({ score_full: fullScore, score_half: halfScore }).eq('id', match.id);
+    }
 
     // 有角球盤才撈角球統計（省 API 額度）
-    const hasCornerBet = (unsettledBets || []).some(b => b.market === '角球');
+    const hasCornerBet = unsettledBets.some(b => b.market === '角球');
     const corners = hasCornerBet
       ? await getCorners({ apiKey, fixtureId: match.api_football_fixture_id })
       : null;
@@ -110,12 +115,8 @@ async function autoSettle({ supabase, apiKey }) {
 
     const homeTeamZh = getTeamNameZh(match.home_team_name);
     const awayTeamZh = getTeamNameZh(match.away_team_name);
-    const fullScore  = { home: scores.fullTime.home,  away: scores.fullTime.away };
-    const halfScore  = scores.halfTime.home != null
-      ? { home: scores.halfTime.home, away: scores.halfTime.away }
-      : null;
 
-    for (const bet of (unsettledBets || [])) {
+    for (const bet of unsettledBets) {
       const score = bet.period === '半場' ? halfScore : fullScore;
       if (!score) {
         await supabase.from('bets').update({ result: RESULT.MANUAL, payout: 0 }).eq('id', bet.id);
