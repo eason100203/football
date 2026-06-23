@@ -350,6 +350,7 @@ if (isGroup) {
     text !== '@賽事列表' &&
     text !== '@小組排行' &&
     text !== '下注紀錄' &&
+    text !== '模板' &&
     !text.startsWith('@賽事分析')
   ) {
     return;
@@ -844,6 +845,75 @@ if (isGroup && text === '下注紀錄') {
       );
 
       return `${header}\n${lines.join('\n')}`;
+    });
+
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: blocks.join('\n\n').slice(0, 5000)
+    });
+  } catch (error) {
+    console.error('群組下注紀錄錯誤:', error);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '❌ 無法取得下注紀錄，請稍後再試'
+    });
+  }
+}
+
+if (isGroup && text === '模板') {
+  try {
+    const groupId = event.source.groupId || event.source.roomId;
+
+    if (!groupId) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '❌ 取得群組資訊失敗'
+      });
+    }
+
+    const { data: members, error: memberError } = await supabase
+      .from('group_members')
+      .select('user_id')
+      .eq('group_id', groupId);
+
+    if (memberError) throw memberError;
+
+    const memberIds = (members || []).map(m => m.user_id);
+
+    if (!memberIds.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '📋 目前沒有群組會員資料'
+      });
+    }
+
+    const { start, end } = getBetMatchRange();
+
+    const { data: matches, error: matchError } = await supabase
+      .from('matches')
+      .select('id, seq_no, home_team_name, away_team_name, match_date')
+      .gte('match_date', start)
+      .lte('match_date', end)
+      .order('seq_no', { ascending: true });
+
+    if (matchError) throw matchError;
+
+    if (!matches?.length) {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '📋 目前沒有今日賽事'
+      });
+    }
+
+    const blocks = matches.map(m => {
+      const home = getTeamNameZh(m.home_team_name) || 'TBD';
+      const away = getTeamNameZh(m.away_team_name) || 'TBD';
+      const matchTime = m.match_date
+        ? dayjs.tz(m.match_date, 'Asia/Taipei').format('HH:mm')
+        : '未設定';
+      const header = `${home} vs ${away} (${matchTime})`;
+
+      return `${header}\n下巴：\n禿頭：\n餃餃：\n蠢平：\n阿向：\n糯米：`;
     });
 
     return client.replyMessage(event.replyToken, {
