@@ -7,12 +7,18 @@
     "start": "node index.js",
     "test": "jest --forceExit"
   },
+  "jest": {
+    "setupFiles": [
+      "dotenv/config"
+    ]
+  },
   "dependencies": {
     "@line/bot-sdk": "^7.7.0",
     "@supabase/supabase-js": "^2.39.3",
     "axios": "^1.15.2",
     "dayjs": "^1.11.20",
     "dotenv": "^16.3.1",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "openai": "^6.39.0",
     "timezone": "^1.0.23",

@@ -1,16 +1,16 @@
 // ============================================================
-// betExportPivot.js — 下注 pivot 匯出（SpreadsheetML 2003，零依賴）
+// betExportPivot.js — 下注 pivot 匯出（真 .xlsx，使用 exceljs）
 //
-// 產出 Excel 可直接開啟的 .xml（SpreadsheetML），支援：
+// 產出標準 OOXML .xlsx，Excel 開啟無「格式與附檔名不符」警告，支援：
 //   合併儲存格 / 背景色 / 字色 / 粗體 / 框線。
-// Excel 雙擊即開；檔名用 .xls 亦可直接開。
 //
 // ── 所有可調設定集中在下方常數，日後改色 / 改欄序 / 改格式只動這裡 ──
 // ============================================================
 
+const ExcelJS = require('exceljs');
 const { getTeamNameZh } = require('./teamName.js');
 
-// 顏色（SpreadsheetML 用 #RRGGBB；若手上是 ARGB 8 碼，去掉前 2 碼 alpha）
+// 顏色（以 #RRGGBB 維護；輸出至 exceljs 時自動補成 ARGB 8 碼）
 const STYLE = {
   headerBg:        '#D3D3D3',  // Header 灰底
   matchBg:         '#DDEBF7',  // 賽程 cell 淡藍
@@ -36,6 +36,7 @@ const WIDTH = {
   asciiCharPt: 5,   // ASCII 字寬估算
   paddingPt:   10,  // 每欄額外留白
   minPt:       40,  // 最小欄寬
+  pointsPerChar: 5.5, // points → exceljs 欄寬（字元數）換算：xlsx 欄寬單位約等於預設字型一個字元寬
 };
 
 // 欄位設定
@@ -94,94 +95,54 @@ function computeColWidths(grid, COLS) {
   return widths.map(w => Math.max(WIDTH.minPt, w + WIDTH.paddingPt));
 }
 
-// ── XML helpers ──
-function escXml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/\n/g, '&#10;');
-}
+// ── exceljs 樣式 helpers ──
+// #RRGGBB → exceljs 需要的 ARGB 8 碼（補上不透明 alpha FF）
+const toArgb = (hex) => 'FF' + String(hex || '000000').replace('#', '').toUpperCase();
 
-function bordersXml() {
-  const sides = ['Left', 'Top', 'Right', 'Bottom'];
-  return '<Borders>' +
-    sides.map(p =>
-      `<Border ss:Position="${p}" ss:LineStyle="Continuous" ss:Weight="${STYLE.borderWeight}" ss:Color="${STYLE.borderColor}"/>`
-    ).join('') +
-    '</Borders>';
-}
+// 框線：borderWeight <= 1 視為 thin，其餘 medium
+const borderStyle = () => {
+  const side = {
+    style: STYLE.borderWeight <= 1 ? 'thin' : 'medium',
+    color: { argb: toArgb(STYLE.borderColor) },
+  };
+  return { top: side, left: side, right: side, bottom: side };
+};
 
-// font 片段（name + size，可選 bold / color）
-function fontXml({ bold = false, color = null } = {}) {
-  let a = ` ss:FontName="${FONT.name}" x:Family="Swiss" ss:Size="${FONT.size}"`;
-  if (bold) a += ' ss:Bold="1"';
-  if (color) a += ` ss:Color="${color}"`;
-  return `<Font${a}/>`;
-}
+// font（name + size，可選 bold / color）
+const fontDef = ({ bold = false, color = null } = {}) => ({
+  name: FONT.name,
+  size: FONT.size,
+  bold,
+  ...(color ? { color: { argb: toArgb(color) } } : {}),
+});
+
+const fillDef = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: toArgb(hex) } });
 
 // 所有 cell 橫向 + 垂直置中、不換行
-const CENTER = '<Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="0"/>';
+const ALIGN_CENTER = { horizontal: 'center', vertical: 'middle', wrapText: false };
 
-// 預定義 styles（字體微軟正黑體、字級 10、全置中）
-function stylesXml() {
-  const B = bordersXml();
-  return `<Styles>
-  <Style ss:ID="Default" ss:Name="Normal">${fontXml()}${CENTER}</Style>
-  <Style ss:ID="header">
-    ${fontXml({ bold: true })}
-    <Interior ss:Color="${STYLE.headerBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="dateCell">
-    ${fontXml()}
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="fixtureCell">
-    ${fontXml({ bold: STYLE.matchBold })}
-    <Interior ss:Color="${STYLE.matchBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="matchCell">
-    ${fontXml()}
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="betCell">
-    ${fontXml()}
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="todayLabel">
-    ${fontXml({ bold: true, color: STYLE.ttlLabelColor })}
-    <Interior ss:Color="${STYLE.todayBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="todayPos">
-    ${fontXml({ bold: true, color: STYLE.payoutPositive })}
-    <Interior ss:Color="${STYLE.todayBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="todayNeg">
-    ${fontXml({ bold: true, color: STYLE.payoutNegative })}
-    <Interior ss:Color="${STYLE.todayBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="ttlLabel">
-    ${fontXml({ bold: true, color: STYLE.ttlLabelColor })}
-    <Interior ss:Color="${STYLE.ttlBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="ttlPos">
-    ${fontXml({ bold: true, color: STYLE.payoutPositive })}
-    <Interior ss:Color="${STYLE.ttlBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-  <Style ss:ID="ttlNeg">
-    ${fontXml({ bold: true, color: STYLE.payoutNegative })}
-    <Interior ss:Color="${STYLE.ttlBg}" ss:Pattern="Solid"/>
-    ${CENTER}${B}
-  </Style>
-</Styles>`;
+// 預定義 styles（字體微軟正黑體、字級 10、全置中、全框線）
+function buildStyles() {
+  const border = borderStyle();
+  const make = (font, fillHex) => ({
+    font,
+    alignment: ALIGN_CENTER,
+    border,
+    ...(fillHex ? { fill: fillDef(fillHex) } : {}),
+  });
+  return {
+    header:      make(fontDef({ bold: true }), STYLE.headerBg),
+    dateCell:    make(fontDef()),
+    fixtureCell: make(fontDef({ bold: STYLE.matchBold }), STYLE.matchBg),
+    matchCell:   make(fontDef()),
+    betCell:     make(fontDef()),
+    todayLabel:  make(fontDef({ bold: true, color: STYLE.ttlLabelColor }), STYLE.todayBg),
+    todayPos:    make(fontDef({ bold: true, color: STYLE.payoutPositive }), STYLE.todayBg),
+    todayNeg:    make(fontDef({ bold: true, color: STYLE.payoutNegative }), STYLE.todayBg),
+    ttlLabel:    make(fontDef({ bold: true, color: STYLE.ttlLabelColor }), STYLE.ttlBg),
+    ttlPos:      make(fontDef({ bold: true, color: STYLE.payoutPositive }), STYLE.ttlBg),
+    ttlNeg:      make(fontDef({ bold: true, color: STYLE.payoutNegative }), STYLE.ttlBg),
+  };
 }
 
 // ── 主函式 ──
@@ -355,57 +316,60 @@ async function buildBetExportPivot({ supabase, dateRange, memberFilter = 'all' }
     }
   }
 
-  // ── 組 XML ──
-  const colWidths = computeColWidths(grid, COLS);
-  const colsXml = colWidths.map(w => `<Column ss:Width="${w}" ss:AutoFitWidth="0"/>`).join('');
+  // ── 用 exceljs 組真 .xlsx ──
+  const colWidths = computeColWidths(grid, COLS); // 各欄寬度（points）
+  const STYLES = buildStyles();
 
-  const rowsXml = [];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(SHEET_NAME, {
+    views: [{ state: 'frozen', ySplit: 1 }], // 凍結首列（header）
+  });
 
-  // Header row
-  rowsXml.push('<Row>' + COLS.map((name, c) =>
-    `<Cell ss:Index="${c + 1}" ss:StyleID="header"><Data ss:Type="String">${escXml(name)}</Data></Cell>`
-  ).join('') + '</Row>');
+  // 欄寬：points → exceljs 字元數，AutoFitWidth=0 等效（固定寬不換行）
+  colWidths.forEach((w, c) => {
+    ws.getColumn(c + 1).width = w / WIDTH.pointsPerChar;
+  });
 
-  // Data rows
+  const applyStyle = (cell, styleId) => {
+    const st = STYLES[styleId];
+    if (!st) return;
+    cell.font = st.font;
+    cell.alignment = st.alignment;
+    cell.border = st.border;
+    if (st.fill) cell.fill = st.fill;
+  };
+
+  // Header row（exceljs row 1）
+  COLS.forEach((name, c) => {
+    const cell = ws.getCell(1, c + 1);
+    cell.value = name;
+    applyStyle(cell, 'header');
+  });
+
+  // Data rows：grid row rr → exceljs row rr + 2（首列為 header）
   for (let rr = 0; rr < grid.length; rr++) {
-    let row = '<Row>';
+    const exRow = rr + 2;
     for (let cc = 0; cc < numCols; cc++) {
-      if (covered[rr][cc]) continue;
-      const cell = grid[rr][cc];
-      if (!cell) continue;
-      let attrs = ` ss:Index="${cc + 1}"`;
-      if (cell.style) attrs += ` ss:StyleID="${cell.style}"`;
-      if (cell.mergeAcross) attrs += ` ss:MergeAcross="${cell.mergeAcross}"`;
-      if (cell.mergeDown) attrs += ` ss:MergeDown="${cell.mergeDown}"`;
-      row += `<Cell${attrs}><Data ss:Type="String">${escXml(cell.v)}</Data></Cell>`;
+      if (covered[rr][cc]) continue; // 被合併覆蓋的格不寫
+      const def = grid[rr][cc];
+      if (!def) continue;
+      const exCol = cc + 1;
+      const cell = ws.getCell(exRow, exCol);
+      cell.value = def.v == null ? '' : String(def.v); // 全部當文字（含 +730 / 0 / -50）
+      applyStyle(cell, def.style);
+
+      const downSpan = def.mergeDown || 0;
+      const acrossSpan = def.mergeAcross || 0;
+      if (downSpan || acrossSpan) {
+        ws.mergeCells(exRow, exCol, exRow + downSpan, exCol + acrossSpan);
+      }
     }
-    row += '</Row>';
-    rowsXml.push(row);
   }
 
-  const xml = `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
-${stylesXml()}
-<Worksheet ss:Name="${escXml(SHEET_NAME)}">
-<Table>
-${colsXml}
-${rowsXml.join('\n')}
-</Table>
-<WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-<FreezePanes/><FrozenNoSplit/>
-<SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane>
-<ActivePane>2</ActivePane>
-</WorksheetOptions>
-</Worksheet>
-</Workbook>`;
+  const arrayBuffer = await wb.xlsx.writeBuffer();
 
   return {
-    buffer: Buffer.from(xml, 'utf-8'),
+    buffer: Buffer.from(arrayBuffer),
     rowCount: grid.length + 1, // + header
     members,
     sheetName: SHEET_NAME,

@@ -153,4 +153,104 @@ async function getHandicapGiver({ apiKey, fixtureId }) {
   }
 }
 
-module.exports = { getFixtureId, getScores, getHandicapGiver };
+/**
+ * 取整場角球數（賽後統計，/fixtures/statistics）。
+ * 角球大小盤只看總數，主/客對應順序不影響結算（total = home + away）。
+ * 統計尚未產生或無 Corner Kicks 欄位時回 null。
+ * @returns {{ home: number, away: number } | null}
+ */
+async function getCorners({ apiKey, fixtureId }) {
+  try {
+    const { data } = await axios.get(`${BASE_URL}/fixtures/statistics`, {
+      headers: makeHeaders(apiKey),
+      params: { fixture: fixtureId },
+      timeout: 8000
+    });
+
+    const teams = data.response || [];
+    if (teams.length < 2) return null; // 統計尚未產生
+
+    const cornerOf = (teamStats) => {
+      const s = (teamStats.statistics || []).find(x => x.type === 'Corner Kicks');
+      const v = s ? s.value : null;
+      return v == null ? null : Number(v);
+    };
+
+    const home = cornerOf(teams[0]);
+    const away = cornerOf(teams[1]);
+    if (home == null || away == null) return null;
+
+    return { home, away };
+  } catch (err) {
+    console.warn('[apiFootball] getCorners error:', err.message);
+    return null;
+  }
+}
+
+// API-Football 的 errors 欄位成功時為 []（陣列），出錯時為物件如 { access: '...' }
+function firstError(errors) {
+  if (!errors) return null;
+  if (Array.isArray(errors)) return errors.length ? String(errors[0]) : null;
+  if (typeof errors === 'object') {
+    const vals = Object.values(errors).filter(Boolean);
+    return vals.length ? String(vals[0]) : null;
+  }
+  return String(errors);
+}
+
+const toIntOrNull = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+
+/**
+ * 查 API-Football 帳號狀態與額度。
+ * 額度（每日/每分鐘剩餘）一律從回應標頭取，因標頭即使帳號被停用也存在；
+ * 帳號資訊（方案/到期/用量）則來自 /status body，停用時 body 為空。
+ * @returns {{
+ *   ok: boolean, error: string|null,
+ *   account: {firstname,lastname,email}|null,
+ *   subscription: {plan,end,active}|null,
+ *   requests: {current,limit_day}|null,
+ *   rate: {dayLimit,dayRemaining,minLimit,minRemaining}
+ * }}
+ */
+async function getApiStatus({ apiKey }) {
+  try {
+    const resp = await axios.get(`${BASE_URL}/status`, {
+      headers: makeHeaders(apiKey),
+      timeout: 8000
+    });
+    const data = resp.data || {};
+    const h = resp.headers || {};
+
+    const rate = {
+      dayLimit:     toIntOrNull(h['x-ratelimit-requests-limit']),
+      dayRemaining: toIntOrNull(h['x-ratelimit-requests-remaining']),
+      minLimit:     toIntOrNull(h['x-ratelimit-limit']),
+      minRemaining: toIntOrNull(h['x-ratelimit-remaining']),
+    };
+
+    const error = firstError(data.errors);
+    const r = data.response;
+    const info = (r && typeof r === 'object' && !Array.isArray(r)) ? r : null;
+
+    return {
+      ok: !error && !!info,
+      error,
+      account:      info?.account || null,
+      subscription: info?.subscription || null,
+      requests:     info?.requests || null,
+      rate,
+    };
+  } catch (err) {
+    console.warn('[apiFootball] getApiStatus error:', err.message);
+    return {
+      ok: false,
+      error: err.message,
+      account: null,
+      subscription: null,
+      requests: null,
+      rate: { dayLimit: null, dayRemaining: null, minLimit: null, minRemaining: null },
+    };
+  }
+}
+
+module.exports = { getFixtureId, getScores, getHandicapGiver, getApiStatus, getCorners };

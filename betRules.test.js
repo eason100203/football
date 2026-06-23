@@ -537,3 +537,69 @@ describe('settleBet 波膽', () => {
     expect(settleBet(bet, { home: 1, away: 0 })).toBe(RESULT.LOST);
   });
 });
+
+// ─── 角球：classify + settle（用 ctx.corners 結算總角球大小）────────────────────
+
+describe('classifyBet 角球', () => {
+  test('角球 10平大 → market 角球、line 10、平、大', () => {
+    const r = classifyBet('角球 10平大');
+    expect(r.market).toBe('角球');
+    expect(r.selection).toBe('大');
+    expect(r.line).toBe(10);
+    expect(r.line_type).toBe('平');
+  });
+
+  test('角球 9.5小 → market 角球、line 9.5、.5、小', () => {
+    const r = classifyBet('角球 9.5小');
+    expect(r.market).toBe('角球');
+    expect(r.selection).toBe('小');
+    expect(r.line).toBe(9.5);
+    expect(r.line_type).toBe('.5');
+  });
+
+  test('無大小的角球文字 → line 留空（保留原文）', () => {
+    const r = classifyBet('角球 主隊讓2');
+    expect(r.market).toBe('角球');
+    expect(r.line).toBeNull();
+  });
+});
+
+describe('settleBet 角球', () => {
+  const corner = (home, away) => ({ corners: { home, away } });
+
+  test('大 9.5：總角球 11 > 9.5 → WON', () => {
+    const bet = classifyBet('角球 9.5大');
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(6, 5))).toBe(RESULT.WON);
+  });
+
+  test('小 9.5：總角球 8 < 9.5 → WON', () => {
+    const bet = classifyBet('角球 9.5小');
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(4, 4))).toBe(RESULT.WON);
+  });
+
+  test('大 10整數：總角球 10 = 線 → PUSH（走盤）', () => {
+    const bet = classifyBet('角球 10大');
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(5, 5))).toBe(RESULT.PUSH);
+  });
+
+  test('大 10平：總角球 12 → WON；8 → LOST', () => {
+    const bet = classifyBet('角球 10平大');
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(7, 5))).toBe(RESULT.WON);
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(4, 4))).toBe(RESULT.LOST);
+  });
+
+  test('沒有 ctx.corners → MANUAL（無法自動結算）', () => {
+    const bet = classifyBet('角球 9.5大');
+    expect(settleBet(bet, { home: 0, away: 0 })).toBe(RESULT.MANUAL);
+  });
+
+  test('半場角球（API 無半場統計）→ MANUAL', () => {
+    const bet = classifyBet('半場 角球 4.5大');
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(5, 5))).toBe(RESULT.MANUAL);
+  });
+
+  test('舊資料 line 空、selection 含原始文字 → 從 selection 回推結算', () => {
+    const bet = { market: '角球', selection: '角球 9.5大', line: null, line_type: null, period: '全場' };
+    expect(settleBet(bet, { home: 0, away: 0 }, corner(6, 5))).toBe(RESULT.WON);
+  });
+});
